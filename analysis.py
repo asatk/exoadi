@@ -5,10 +5,7 @@ from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
 
-def plot_redux(zscale=False):
-
-    datafilepath = "./out/data_mean_00040_00080.fits"
-    outfilepath = "./out/signal_mean_plot.png"
+def plot_redux(datafilepath, zscale=False, outfilepath=None):
 
     with fits.open(datafilepath) as datahdu:
         data = np.array(datahdu[1].data)
@@ -35,9 +32,10 @@ def plot_redux(zscale=False):
 
     if zscale:
         zmin, zmax = ZScaleInterval().get_limits(data)
-    else:
-        zmin = np.min(data)
-        zmax = np.max(data)
+    # >>>> ASK BEN should I keep same or diff scales for each img?
+    # else:
+    #     zmin = np.min(data)
+    #     zmax = np.max(data)
 
     # --- FIG --- #
     fig = plt.figure(figsize=(15, 5), facecolor='white')
@@ -47,7 +45,12 @@ def plot_redux(zscale=False):
 
     # --- PLOT 1 --- #
     ax1.set_title("cADI image after combining\nby mean over $\lambda$ and $t$")
+    
     ax1_data = data
+    if not zscale:
+        zmin = np.min(ax1_data)
+        zmax = np.max(ax1_data)
+
     im1 = ax1.imshow(ax1_data, vmin=zmin, vmax=zmax)
     fig.colorbar(im1, ax=ax1)
 
@@ -59,20 +62,34 @@ def plot_redux(zscale=False):
     ax2.text(0.6, 0.5, datastr, fontsize=12, transform=ax2.transAxes,
             bbox=dict(facecolor='#f5f5dc', alpha=0.5))
     ax2.set_title("2D Gaussian fit to planet signal")
+    
     ax2_data = gausfit(xind, yind)
+    if not zscale:
+        zmin = np.min(ax2_data)
+        zmax = np.max(ax2_data)
+
     im2 = ax2.imshow(ax2_data, vmin=zmin, vmax=zmax)
     fig.colorbar(im2, ax=ax2)
 
     # --- PLOT 3 --- #
     ax3.set_title("Residual image")
     ax3_data = data - gausfit(xind, yind)
+    if not zscale:
+        zmin = np.min(ax3_data)
+        zmax = np.max(ax3_data)
+
     im3 = ax3.imshow(ax3_data, vmin=zmin, vmax=zmax)
     fig.colorbar(im3, ax=ax3)
 
     # --- FIG --- #
     fig.tight_layout()
-    fig.savefig(outfilepath)
+    if outfilepath is not None:
+        fig.savefig(outfilepath)
     plt.show()
 
 if __name__ == "__main__":
-    plot_redux(zscale=False)
+
+    datafilepath = "./out/data_mean_00040_00080.fits"
+    outfilepath = "./out/signal_mean_temp_plot.png"
+
+    plot_redux(datafilepath, zscale=False, outfilepath=outfilepath)

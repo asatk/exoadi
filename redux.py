@@ -19,8 +19,8 @@ datafilepath = datadirpath + datafilename
 datafilepaths = [datafilepath] * nchnls
 
 outdirname = "out/"
-outchannelfilename = "data_%05i_mean.fits"
-outallfilename = "data_mean_%05i_%05i.fits"%(firstdatafilenum, lastdatafilenum)
+outchannelfilename = "cADI_%05i_mean.fits"
+outallfilename = "cADI_mean_%05i_%05i.fits"%(firstdatafilenum, lastdatafilenum)
 
 # outchannelfilepath = outdirname + outchannelfilename
 outchannelfilepath = None

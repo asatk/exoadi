@@ -5,6 +5,8 @@ import numpy as np
 from scipy import ndimage
 from typing import Callable
 
+numworkers = 8
+
 # get list of angles for de-rotation
 anglesfilepath = "data/parangs_bads_removed.txt"
 anglestable = ascii.read(anglesfilepath, format="no_header", data_start=0)
@@ -53,7 +55,7 @@ def combine_channels(datafilenums: list[int], datafilepaths: list[str], combine_
         outchannelfilepaths = list[None] * nchnls
 
     # calculate ADI image for each wavelength channel
-    with mp.Pool(8) as pool:
+    with mp.Pool(numworkers) as pool:
         channels = np.array(pool.starmap(
             reduce_channel,
             zip(datafilenums, datafilepaths, [channel_combine_fn] * nchnls, outchannelfilepaths)))
