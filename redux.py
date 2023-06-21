@@ -1,60 +1,63 @@
 import numpy as np
 
-import redux_utils
-
-# --- DATA INFO --- #
-# datafilenum = 52
-xdim = 63
-ydim = 63
-firstdatafilenum = 40
-lastdatafilenum = 80
-datafilenums = list(range(firstdatafilenum, lastdatafilenum))
-nchnls = len(datafilenums)
-# --- DATA INFO --- #
-
-# --- PATHS --- #
-datadirpath = "./data/005_center_multishift/"
-datafilename = "wl_channel_%05i.fits"
-datafilepath = datadirpath + datafilename
-datafilepaths = [datafilepath] * nchnls
-
-outdirname = "out/"
-outchannelfilename = "cADI_%05i_mean.fits"
-outallfilename = "cADI_mean_%05i_%05i.fits"%(firstdatafilenum, lastdatafilenum)
-
-# outchannelfilepath = outdirname + outchannelfilename
-outchannelfilepath = None
-outchannelfilepaths = [outchannelfilepath] * nchnls
-outallfilepath = outdirname + outallfilename
-# --- PATHS --- #
-
 if __name__ == "__main__":
 
-    # # --- DATA INFO --- #
-    # # datafilenum = 52
-    # xdim = 63
-    # ydim = 63
-    # firstdatafilenum = 40
-    # lastdatafilenum = 80
-    # datafilenums = list(range(firstdatafilenum, lastdatafilenum))
-    # nchnls = len(datafilenums)
-    # # --- DATA INFO --- #
+    # in the future these parameters will change upon running script
 
-    # # --- PATHS --- #
-    # datadirpath = "./data/005_center_multishift/"
-    # datafilename = "wl_channel_%05i.fits"
-    # datafilepath = datadirpath + datafilename
-    # datafilepaths = [datafilepath] * nchnls
+    # --- DATA INFO --- #
+    # datafilenum = 52
+    xdim = 63
+    ydim = 63
+    firstchannelnum = 40
+    lastchannelnum = 80
+    channelnums = list(range(firstchannelnum, lastchannelnum))
+    nchnls = len(channelnums)
+    # --- DATA INFO --- #
 
-    # outdirname = "out/"
-    # outchannelfilename = "data_%05i_median.fits"
-    # outallfilename = "data_mean_%05i_%05i.fits"%(firstdatafilenum, lastdatafilenum)
+    # --- PATHS --- #
+    datapath = "./data/005_center_multishift/wl_channel_%05i.fits"
+    datapaths = [datapath] * nchnls
+    # --- PATHS --- #
 
-    # # outchannelfilepath = outdirname + outchannelfilename
-    # outchannelfilepath = None
-    # outchannelfilepaths = [outchannelfilepath] * nchnls
-    # outallfilepath = outdirname + outallfilename
-    # # --- PATHS --- #
+    # --- COMBINE INFO --- #
+    combine_fn = np.median
+    channel_combine_fn = np.median
+    collapse_channel = "median"
+    # --- COMBINE INFO --- #
 
-    redux_utils.combine_channels(datafilenums, datafilepaths, combine_fn=np.mean, channel_combine_fn=np.mean, outfilepath=outallfilepath, outchannelfilepaths=outchannelfilepaths)
+    # --- RUN INFO --- #
+    mode = 1
+    # redux_utils.numworkers = 8
+    # --- RUN INFO --- #
+    
+    if mode == 0:       # Classical ADI
+        import redux_utils
 
+        # outchannelpath = "./out/cADI_%05i_mean.fits"
+        outchannelpath = None
+        outchannelpaths = [outchannelpath] * nchnls
+        outcombinedpath = "./out/cADI_median_%05i_%05i.fits"%(firstchannelnum, lastchannelnum)
+
+        redux_utils.combine_channels(channelnums, datapaths,
+                combine_fn=combine_fn, channel_combine_fn=channel_combine_fn,
+                outpath=outcombinedpath, outchannelpaths=outchannelpaths)
+        
+    elif mode == 1:     # VIP ADI (LOCI)
+        import redux_vip
+
+        # outchannelpath = "./out/vipADI_%05i_median.fits"
+        outchannelpath = None
+        outchannelpaths = [outchannelpath] * nchnls
+        outcombinedpath = "./out/vipADI_temp_median_%05i_%05i.fits"%(firstchannelnum, lastchannelnum)
+
+        redux_vip.combine_channels_vip(channelnums, datapaths=datapaths,
+                combine_fn=combine_fn, collapse_channel=collapse_channel,
+                outpath=outcombinedpath, outchannelpaths=outchannelpaths)
+        
+    elif mode == 2:     # PynPoint ADI
+        import redux_pyn
+
+        outchannelpath = "./out/pynADI_%05i_median.fits"
+        # outchannelpath = None
+        outchannelpaths = [outchannelpath] * nchnls
+        outcombinedpath = "./out/pynADI_%05i_%05i_median.fits"%(firstchannelnum, lastchannelnum)

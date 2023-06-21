@@ -5,11 +5,11 @@ import numpy as np
 from scipy import ndimage
 from typing import Callable
 
-numworkers = 8
+numworkers = 6
 
 # get list of angles for de-rotation
-anglesfilepath = "data/parangs_bads_removed.txt"
-anglestable = ascii.read(anglesfilepath, format="no_header", data_start=0)
+anglespath = "data/parangs_bads_removed.txt"
+anglestable = ascii.read(anglespath, format="no_header", data_start=0)
 angles = anglestable['col1'].data
 
 # save array to specified path
@@ -19,10 +19,10 @@ def savedata(data: np.ndarray, path: str, overwrite: bool=True) -> None:
     hdul.append(fits.ImageHDU(data=data))
     hdul.writeto(path, overwrite=overwrite)
 
-def reduce_channel(datafilenum: int, datafilepath: str, combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outfilepath: str=None) -> np.ndarray:
+def reduce_channel(channelnum: int, datapath: str, combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outpath: str=None) -> np.ndarray:
 
     # load data cube
-    with fits.open(datafilepath%(datafilenum)) as datahdu:
+    with fits.open(datapath%(channelnum)) as datahdu:
         data = datahdu[0].data
         assert len(angles) == len(data)
 
@@ -38,32 +38,53 @@ def reduce_channel(datafilenum: int, datafilepath: str, combine_fn: Callable[[np
     # combine de-rotated images in this wavelength channel
     datacombined = combine_fn(datarot, axis=0)
 
-    if outfilepath is not None:
-        savedata(datacombined, outfilepath%(datafilenum))
+    if outpath is not None:
+        savedata(datacombined, outpath%(channelnum))
 
     return datacombined
 
 # combine each wavelength channel
-def combine_channels(datafilenums: list[int], datafilepaths: list[str], combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outfilepath: str=None, outchannelfilepaths: list[str]=None) -> np.ndarray:
+def combine_channels(channelnums: list[int], datapaths: list[str], combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outpath: str=None, outchannelpaths: list[str]=None) -> np.ndarray:
 
-    nchnls = len(datafilenums)
-    assert nchnls == len(datafilepaths)
+    nchnls = len(channelnums)
+    assert nchnls == len(datapaths)
 
-    if outchannelfilepaths is not None:
-        assert nchnls == len(outchannelfilepaths)
+    if outchannelpaths is not None:
+        assert nchnls == len(outchannelpaths)
     else:
-        outchannelfilepaths = list[None] * nchnls
+        outchannelpaths = list[None] * nchnls
 
     # calculate ADI image for each wavelength channel
     with mp.Pool(numworkers) as pool:
         channels = np.array(pool.starmap(
             reduce_channel,
-            zip(datafilenums, datafilepaths, [channel_combine_fn] * nchnls, outchannelfilepaths)))
+            zip(channelnums, datapaths, [channel_combine_fn] * nchnls, outchannelpaths)))
 
     # combine ADI images across channels
     redux = combine_fn(channels, axis=0)
     
-    if outfilepath is not None:
-        savedata(redux, outfilepath)
+    if outpath is not None:
+        savedata(redux, outpath)
 
     return redux
+
+if __name__ == "__main__":
+
+    # --- DATA INFO --- #
+    firstchannelnum = 40
+    lastchannelnum = 80
+    channelnums = list(range(firstchannelnum, lastchannelnum))
+    nchnls = len(channelnums)
+    # --- DATA INFO --- #
+
+    # --- PATHS --- #
+    datapath = "./data/005_center_multishift/wl_channel_%05i.fits"
+    datapaths = [datapath] * nchnls
+
+    outchannelpath = "./out/cADI_%05i_mean.fits"
+    # outchannelpath = None
+    outchannelpaths = [outchannelpath] * nchnls
+    outcombinedpath = "./out/cADI_mean_%05i_%05i.fits"%(firstchannelnum, lastchannelnum)
+    # --- PATHS --- #
+
+    combine_channels(channelnums, datapaths, combine_fn=np.mean, channel_combine_fn=np.mean, outpath=outcombinedpath, outchannelpaths=outchannelpaths)
