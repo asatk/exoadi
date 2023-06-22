@@ -5,9 +5,12 @@ import numpy as np
 from scipy import ndimage
 from typing import Callable
 
-numworkers = 6
+numworkers = 8
+numcomps = 20
+
 
 # get list of angles for de-rotation
+# >>>> figure out why angles are not the double precision as in the file
 anglespath = "data/parangs_bads_removed.txt"
 anglestable = ascii.read(anglespath, format="no_header", data_start=0)
 angles = anglestable['col1'].data
