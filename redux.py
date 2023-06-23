@@ -1,4 +1,5 @@
 import numpy as np
+import redux_utils
 
 if __name__ == "__main__":
 
@@ -15,6 +16,8 @@ if __name__ == "__main__":
     # --- DATA INFO --- #
 
     # --- PATHS --- #
+    datadir = "./data"
+    outdir = "./out"
     datapath = "./data/005_center_multishift/wl_channel_%05i.fits"
     datapaths = [datapath] * nchnls
     # --- PATHS --- #
@@ -26,7 +29,7 @@ if __name__ == "__main__":
     # --- COMBINE INFO --- #
 
     # --- RUN INFO --- #
-    mode = 1
+    mode = 2
     # redux_utils.numworkers = 8
     # --- RUN INFO --- #
     
@@ -57,7 +60,9 @@ if __name__ == "__main__":
     elif mode == 2:     # PynPoint ADI
         import redux_pyn
 
-        outchannelpath = "./out/pynADI_%05i_median.fits"
-        # outchannelpath = None
-        outchannelpaths = [outchannelpath] * nchnls
-        outcombinedpath = "./out/pynADI_%05i_%05i_median.fits"%(firstchannelnum, lastchannelnum)
+        datapath = datadir + "/" + "005_center_multishift/wl_channel_%05i.fits"
+        datapaths = [datapath%(channelnum) for channelnum in channelnums]
+        outcombinedpath = "./out/pyn_PCA%03i_%05i_%05i_PREPPED.fits"%(redux_utils.numcomps, firstchannelnum, lastchannelnum)
+
+        redux_pyn.reduce_channel_pyn(datadir, datapaths, outdir=outdir,
+                outpath=outcombinedpath)
