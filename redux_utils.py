@@ -5,9 +5,9 @@ import numpy as np
 from scipy import ndimage
 from typing import Callable
 
-numworkers = 8
-numcomps = 20
-
+numworkers = 8      # number of worker threads/processes
+numcomps = 3        # number of PCA components
+everynthframe = 50   # number of frames 'n' selected from data cube
 
 # get list of angles for de-rotation
 # >>>> figure out why angles are not the double precision as in the file
@@ -29,14 +29,17 @@ def reduce_channel(channelnum: int, datapath: str, combine_fn: Callable[[np.ndar
         data = datahdu[0].data
         assert len(angles) == len(data)
 
+    anglesselected = angles[::everynthframe]
+    dataselected = data[::everynthframe]
+
     # subtract median PSF from all frames in this wavelength channel
-    medpsf = np.median(data, axis=0)
-    datasub = np.subtract(data, medpsf)
+    medpsf = np.median(dataselected, axis=0)
+    datasub = np.subtract(dataselected, medpsf)
 
     # de-rotate the data
     datarot = np.empty_like(datasub)
-    for i in range(len(angles)):
-        datarot[i] = ndimage.rotate(datasub[i], -1 * angles[i], reshape=False)
+    for i in range(len(anglesselected)):
+        datarot[i] = ndimage.rotate(datasub[i], -1 * anglesselected[i], reshape=False)
 
     # combine de-rotated images in this wavelength channel
     datacombined = combine_fn(datarot, axis=0)
@@ -84,10 +87,10 @@ if __name__ == "__main__":
     datapath = "./data/005_center_multishift/wl_channel_%05i.fits"
     datapaths = [datapath] * nchnls
 
-    outchannelpath = "./out/cADI_%05i_mean.fits"
-    # outchannelpath = None
+    # outchannelpath = "./out/cADI_%05i_mean.fits"
+    outchannelpath = None
     outchannelpaths = [outchannelpath] * nchnls
-    outcombinedpath = "./out/cADI_mean_%05i_%05i.fits"%(firstchannelnum, lastchannelnum)
+    outcombinedpath = "./out/cADI_mean_%05i_%05i_every%02i.fits"%(firstchannelnum, lastchannelnum, everynthframe)
     # --- PATHS --- #
 
     combine_channels(channelnums, datapaths, combine_fn=np.mean, channel_combine_fn=np.mean, outpath=outcombinedpath, outchannelpaths=outchannelpaths)

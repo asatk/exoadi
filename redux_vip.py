@@ -2,21 +2,23 @@ import multiprocessing as mp
 import numpy as np
 from typing import Callable
 
-import vip_hci as vip
-from hciplot import plot_frames, plot_cubes
-from vip_hci.config import VLT_NACO
-from vip_hci.fm import normalize_psf
+# import vip_hci as vip
+# from hciplot import plot_frames, plot_cubes
+# from vip_hci.config import VLT_NACO
+# from vip_hci.fm import normalize_psf
 from vip_hci.psfsub import median_sub, pca
 from vip_hci.fits import open_fits, write_fits, info_fits
-from vip_hci.metrics import significance, snr, snrmap
-from vip_hci.var import fit_2dgaussian, frame_center
+# from vip_hci.metrics import significance, snr, snrmap
+# from vip_hci.var import fit_2dgaussian, frame_center
 
 import redux_utils
 
 def reduce_channel_vip(channelnum: int, datapath: str, collapse: str="median", outpath: str = None):
     
     data = open_fits(datapath%(channelnum))
-    adi = median_sub(data, redux_utils.angles, collapse=collapse, imlib="vip-fft", interpolation=None)
+    dataselected = data[::redux_utils.everynthframe]
+    anglesselected = redux_utils.angles[::redux_utils.everynthframe]
+    adi = median_sub(dataselected, anglesselected, collapse=collapse, imlib="vip-fft", interpolation=None)
 
     if outpath is not None:
         redux_utils.savedata(adi, outpath%(channelnum))
