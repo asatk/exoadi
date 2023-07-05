@@ -5,10 +5,16 @@ from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
 
-def plot_redux(datafilepath, zscale=False, outfilepath=None):
+import redux_utils
 
-    with fits.open(datafilepath) as datahdu:
-        data = np.array(datahdu[1].data)
+def plot_redux(name, zscale=True, save=True):
+
+    data_path = "out/%s.fits"%name
+    out_path = "out/%s_plot.png"%name
+
+    with fits.open(data_path) as datahdu:
+        print(datahdu[1].fileinfo())
+        data = np.array(datahdu[0].data)
 
     xdim = 63
     ydim = 63
@@ -44,7 +50,7 @@ def plot_redux(datafilepath, zscale=False, outfilepath=None):
     ax3 = fig.add_subplot(133)
 
     # --- PLOT 1 --- #
-    ax1.set_title("cADI image after combining\nby mean over $\lambda$ and $t$")
+    ax1.set_title(name)
     
     ax1_data = data
     if not zscale:
@@ -83,13 +89,40 @@ def plot_redux(datafilepath, zscale=False, outfilepath=None):
 
     # --- FIG --- #
     fig.tight_layout()
-    if outfilepath is not None:
-        fig.savefig(outfilepath)
-    plt.show()
+    if save:
+        fig.savefig(out_path)
+    # plt.show()
 
 if __name__ == "__main__":
 
-    datafilepath = "./out/data_mean_00040_00080.fits"
-    outfilepath = "./out/signal_mean_temp_plot.png"
+    # name = "cADI_mean_00040_00080_every05"
 
-    plot_redux(datafilepath, zscale=False, outfilepath=outfilepath)
+    names = [
+        "cADI_median_00010_00090",
+        "cADI_median_00040_00080",
+        "cADI_mean_00010_00090",
+        "cADI_mean_00040_00080",
+        "cADI_mean_00040_00080_every05",
+        "cADI_mean_00040_00080_every10",
+        "cADI_mean_00040_00080_every20",
+        "cADI_mean_00040_00080_every50",
+        "vipADI_median_00010_00090",
+        "vipADI_median_00040_00080",
+        "vipADI_mean_00010_00090",
+        "vipADI_mean_00040_00080",
+        "pyn_PCA003_00040_00080_median",
+        "pyn_PCA003_00040_00080_median_PREPPED",
+        "pyn_PCA003_00045_00074_median",
+        "pyn_PCA003_00045_00074_mean",
+        # "pyn_PCA005_00045_00074_median",
+        # "pyn_PCA005_00045_00074_mean",
+        "pyn_PCA020_00040_00080_median",
+    ]
+
+    # names = [
+    #     "pyn_PCA005_00045_00074_median",
+    #     "pyn_PCA005_00045_00074_mean",
+    # ]
+
+    with mp.Pool(redux_utils.numworkers) as pool:
+        pool.map(plot_redux, names)

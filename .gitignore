@@ -1,3 +1,4 @@
 data/
 out/
-.ipynb_checkpoints
+pyn/
+*.pyc

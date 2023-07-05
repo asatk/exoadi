@@ -11,8 +11,8 @@ everynthframe = 50   # number of frames 'n' selected from data cube
 
 # get list of angles for de-rotation
 # >>>> figure out why angles are not the double precision as in the file
-anglespath = "data/parangs_bads_removed.txt"
-anglestable = ascii.read(anglespath, format="no_header", data_start=0)
+angles_path = "data/parangs_bads_removed.txt"
+anglestable = ascii.read(angles_path, format="no_header", data_start=0)
 angles = anglestable['col1'].data
 
 # save array to specified path
@@ -22,10 +22,12 @@ def savedata(data: np.ndarray, path: str, overwrite: bool=True) -> None:
     hdul.append(fits.ImageHDU(data=data))
     hdul.writeto(path, overwrite=overwrite)
 
-def reduce_channel(channelnum: int, datapath: str, combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outpath: str=None) -> np.ndarray:
+def reduce_channel(channelnum: int, data_path: str, 
+        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
+        out_path: str=None) -> np.ndarray:
 
     # load data cube
-    with fits.open(datapath%(channelnum)) as datahdu:
+    with fits.open(data_path%(channelnum)) as datahdu:
         data = datahdu[0].data
         assert len(angles) == len(data)
 
@@ -44,33 +46,36 @@ def reduce_channel(channelnum: int, datapath: str, combine_fn: Callable[[np.ndar
     # combine de-rotated images in this wavelength channel
     datacombined = combine_fn(datarot, axis=0)
 
-    if outpath is not None:
-        savedata(datacombined, outpath%(channelnum))
+    if out_path is not None:
+        savedata(datacombined, out_path%(channelnum))
 
     return datacombined
 
 # combine each wavelength channel
-def combine_channels(channelnums: list[int], datapaths: list[str], combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean, outpath: str=None, outchannelpaths: list[str]=None) -> np.ndarray:
+def combine_channels(channelnums: list[int], data_paths: list[str],
+        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
+        channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
+        out_path: str=None, outchannel_paths: list[str]=None) -> np.ndarray:
 
     nchnls = len(channelnums)
-    assert nchnls == len(datapaths)
+    assert nchnls == len(data_paths)
 
-    if outchannelpaths is not None:
-        assert nchnls == len(outchannelpaths)
+    if outchannel_paths is not None:
+        assert nchnls == len(outchannel_paths)
     else:
-        outchannelpaths = list[None] * nchnls
+        outchannel_paths = list[None] * nchnls
 
     # calculate ADI image for each wavelength channel
     with mp.Pool(numworkers) as pool:
         channels = np.array(pool.starmap(
             reduce_channel,
-            zip(channelnums, datapaths, [channel_combine_fn] * nchnls, outchannelpaths)))
+            zip(channelnums, data_paths, [channel_combine_fn] * nchnls, outchannel_paths)))
 
     # combine ADI images across channels
     redux = combine_fn(channels, axis=0)
     
-    if outpath is not None:
-        savedata(redux, outpath)
+    if out_path is not None:
+        savedata(redux, out_path)
 
     return redux
 
@@ -84,13 +89,13 @@ if __name__ == "__main__":
     # --- DATA INFO --- #
 
     # --- PATHS --- #
-    datapath = "./data/005_center_multishift/wl_channel_%05i.fits"
-    datapaths = [datapath] * nchnls
+    data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
+    data_paths = [data_path] * nchnls
 
     # outchannelpath = "./out/cADI_%05i_mean.fits"
-    outchannelpath = None
-    outchannelpaths = [outchannelpath] * nchnls
-    outcombinedpath = "./out/cADI_mean_%05i_%05i_every%02i.fits"%(firstchannelnum, lastchannelnum, everynthframe)
+    outchannel_path = None
+    outchannel_paths = [outchannel_path] * nchnls
+    outcombined_path = "./out/cADI_mean_%05i_%05i_every%02i.fits"%(firstchannelnum, lastchannelnum, everynthframe)
     # --- PATHS --- #
 
-    combine_channels(channelnums, datapaths, combine_fn=np.mean, channel_combine_fn=np.mean, outpath=outcombinedpath, outchannelpaths=outchannelpaths)
+    combine_channels(channelnums, data_paths, combine_fn=np.mean, channel_combine_fn=np.mean, out_path=outcombined_path, outchannel_paths=outchannel_paths)
