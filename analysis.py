@@ -5,6 +5,8 @@ from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
 
+from vip_hci.metrics import significance, snr, snrmap
+
 import redux_utils
 
 def plot_redux(name, zscale=True, save=True):
@@ -92,6 +94,14 @@ def plot_redux(name, zscale=True, save=True):
     if save:
         fig.savefig(out_path)
     # plt.show()
+
+def calc_stats(pl_data, fwhm):
+    pl_loc = (12, 41)
+    st_loc = (63//2, 63//2)
+    pl_rad = np.sqrt(np.sum(np.square(np.array(st_loc) - np.array(pl_loc))))
+    pl_snr = snr(pl_data, pl_loc, fwhm=fwhm, exclude_negative_lobes=True)
+    pl_sgn = significance(pl_snr, pl_rad, fwhm, student_to_gauss=True)
+    print(pl_snr, pl_sgn)
 
 if __name__ == "__main__":
 
