@@ -1,7 +1,10 @@
 import multiprocessing as mp
 import numpy as np
-from numpy import linalg as la
+# from numpy import linalg as la
 from scipy import ndimage
+from scipy.sparse.linalg import svds
+from sklearn.decomposition import TruncatedSVD
+from sklearn.utils.extmath import randomized_svd
 from typing import Callable
 
 from redux_utils import to_fits, to_npy, numcomps, numworkers
@@ -54,9 +57,19 @@ def combine_ADI_npy(cube: np.ndarray, angles: np.ndarray,
 
     return adi_combined
 
-# def PCA_npy(cube: np.ndarray, ncomps: int):
-#     mtx = cube.reshape(cube.shape[0], -1)
-    # s = la.svd(mtx,)  #suggest if m >> n, compute la.qr factorization first
+def PCA_npy(cube: np.ndarray, ncomps: int):
+    mtx = cube.reshape(cube.shape[0], -1) #should whiten/center data before pca
+    # u, s, vh = la.svd(mtx)  #suggest if m >> n, compute la.qr factorization first
+    u, s, vh = svds(mtx, k=ncomps)
+    u, s, vh = randomized_svd(mtx, n_components=ncomps)
+    trsvd = TruncatedSVD(n_components=ncomps)
+    res1 = trsvd.transform(mtx)
+    res2 = trsvd.fit_transform(mtx)
+    s = trsvd.singular_values_
+    vh = trsvd.components_
+    u = trsvd(mtx).dot(np.linalg.inv(np.diag(trsvd.singular_values_)))
+
+    return (u, s, vh)
 
 
 if __name__ == "__main__":

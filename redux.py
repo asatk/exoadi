@@ -3,9 +3,17 @@ import numpy as np
 import analysis
 import redux_utils
 
+
+
+
 if __name__ == "__main__":
 
     # in the future these parameters will change upon running script
+
+    # Load important derotation angle and channel wavelength data
+    angles_path = "data/parangs_bads_removed.txt"
+    wavelengths_path = "data/channel_wavelengths.txt"
+    angles, wavelengths = redux_utils.init(angles_path, wavelengths_path)
 
     # --- DATA INFO --- #
     # datafilenum = 52
@@ -15,9 +23,8 @@ if __name__ == "__main__":
     lastchannelnum = 74
     channelnums = list(range(firstchannelnum, lastchannelnum + 1))
     nchnls = len(channelnums)
-    angles = redux_utils.angles
     angles_skipped = angles[::redux_utils.everynthframe]
-    wavelengths = redux_utils.wavelengths[firstchannelnum:lastchannelnum + 1]
+    wavelengths_selected = wavelengths[firstchannelnum:lastchannelnum + 1]
     # --- DATA INFO --- #
 
     # --- PATHS --- #
@@ -72,7 +79,7 @@ if __name__ == "__main__":
                 cube=cube, wavelengths=wavelengths, angles=angles,
                 out_path=outcombined_path, do_opt=False, kwargs=annular_kwargs)
             
-            analysis.calc_stats(med_asdi, fwhm)
+            # analysis.calc_stats(med_asdi, fwhm)
 
         # elif algo == "ANDROMEDA":
         #     pass
@@ -93,12 +100,12 @@ if __name__ == "__main__":
         else:
             print("Algorithm '%s' not supported for VIP analysis"%algo)
         
-    elif mode == 2:     # PynPoint ADI
-        import redux_pyn
+    # elif mode == 2:     # PynPoint ADI
+    #     import redux_pyn
 
-        data_path = data_dir + "/" + "005_center_multishift/wl_channel_%05i.fits"
-        data_paths = [data_path%(channelnum) for channelnum in channelnums]
-        outcombined_path = "./out/pyn_PCA%03i_%05i_%05i.fits"%(redux_utils.numcomps, firstchannelnum, lastchannelnum)
+    #     data_path = data_dir + "/" + "005_center_multishift/wl_channel_%05i.fits"
+    #     data_paths = [data_path%(channelnum) for channelnum in channelnums]
+    #     outcombined_path = "./out/pyn_PCA%03i_%05i_%05i.fits"%(redux_utils.numcomps, firstchannelnum, lastchannelnum)
 
-        redux_pyn.reduce_channel_pyn(data_dir, data_paths, out_dir=out_dir,
-                out_path=outcombined_path)
+    #     redux_pyn.reduce_channel_pyn(data_dir, data_paths, out_dir=out_dir,
+    #             out_path=outcombined_path)

@@ -2,14 +2,9 @@ import multiprocessing as mp
 import numpy as np
 from typing import Callable
 
-import vip_hci as vip
-from hciplot import plot_frames, plot_cubes
-
 from vip_hci.fm import normalize_psf
-from vip_hci.psfsub import median_sub, pca
+from vip_hci.psfsub import median_sub, pca, pca_annular
 from vip_hci.preproc import find_scal_vector, frame_rescaling
-from vip_hci.fits import open_fits
-from vip_hci.metrics import significance, snr, snrmap
 from vip_hci.var import mask_circle
 
 import redux_utils
@@ -17,6 +12,10 @@ import redux_utils
 imlib = "vip-fft"
 interpolation = "lanczos4"
 collapse="median"
+nbranch = 2
+pxscale = 0.027
+drot = 0.5
+rot_options = {'mask_val': 0, 'interp_zeros': True, 'imlib': 'vip-fft', 'interpolation': 'lanczos4'}
 
 def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
     '''
@@ -46,22 +45,48 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
 
     return opt_scal, opt_flux
 
-def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
-        out_path: str=None, do_opt: bool=False, sub_type: str="ASDI",
-        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+
+def _prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
+          do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
+    '''
+    Prepare key arguments required in the post-processing algorithms in VIP.
+    These arguments are the FWHM of the PSF before normalization, the optimal
+    scaling geometrically, and the optimal scaling in flux in the images.
+    '''
 
     # model psf - take median along time axis - beware of companion smearing
-    psf = np.median(cubes[:,::redux_utils.everynthframe], axis=1)
+    psf = np.median(cubes, axis=1)
 
     # get flux and fwhm of host star in each channel
-    psfn, flux_st, fwhm = normalize_psf(psf, fwhm="fit", full_output=True, debug=False)
-    fwhm_mean = np.mean(fwhm)
+    psfn, flux_st, fwhm_list = normalize_psf(psf, fwhm="fit", full_output=True, debug=False)
+    fwhm = np.mean(fwhm_list)
 
     #pixel diameter of star
-    mask_rad = 10
     mask = mask_circle(np.ones_like(cubes[0,0]), mask_rad)
 
     opt_scal, opt_flux = calc_scal(cubes, wavelengths, flux_st, mask, do_opt=do_opt)
+
+    return fwhm, opt_scal, opt_flux
+
+def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
+        out_path: str=None, mask_rad: float=10, do_opt: bool=False,
+        full_output: bool=False, sub_type: str="ASDI",
+        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+
+
+    fwhm, opt_scal, opt_flux = _prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
+
+
+    # algo args
+    ncomp = redux_utils.numcomps
+    nproc = redux_utils.numworkers
+    scaling = "temp-standard"
+    an_dist = np.linspace(np.min(angles), np.max(angles), nbranch, endpoint=True)
+    algo_dict = {'ncomp': ncomp, 'imlib': "vip-fft", "interpolation": "lanczos4"}
+    rot_options = {"interp_zeros": True, "mask_val": 0}
+    combine_fn = np.median
+
+
 
     # Annular ASDI kws
     if "annular" in sub_type:
@@ -74,21 +99,20 @@ def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
                       "were not provided. Missing '%s' at least..."%kw)
                 return (None, None)
             
-        asize = kwargs["asize"]
+        asize = fwhm if kwargs["asize"] is None else kwargs["asize"]
         delta_rot = kwargs["delta_rot"]
         delta_sep = kwargs["delta_sep"]
-        nframes = kwargs["delta_sep"]
+        nframes = kwargs["nframes"]
     
-    rot_options = {"interp_zeros": True, "mask_val": 0}
-    combine_fn = np.median
 
+    
     if sub_type == "ASDI":
         sub = median_sub(cubes, angles, scale_list=opt_scal,
                             flux_sc_list=opt_flux, radius_int=mask_rad,
-                            nproc=redux_utils.numworkers)
+                            nproc=nproc)
     elif sub_type == "ASDI_annular":
         sub = median_sub(cubes, angles, scale_list=opt_scal,
-                          flux_sc_list=opt_flux, fwhm=fwhm_mean, asize=asize,
+                          flux_sc_list=opt_flux, fwhm=fwhm, asize=asize,
                           mode="annular", delta_rot=delta_rot,
                           radius_int=mask_rad, nframe=nframes, imlib=imlib,
                           collapse=collapse, interpolation=interpolation)
@@ -97,7 +121,7 @@ def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
                              interpolation=interpolation)
         sub = redux_utils.combine(sub_adi)
     elif sub_type == "ADI_annular":
-        sub_adi_ann = median_sub(cubes, angles, fwhm=fwhm_mean, asize=asize,
+        sub_adi_ann = median_sub(cubes, angles, fwhm=fwhm, asize=asize,
                                  mode="annular", delta_rot=delta_rot,
                                  radius_int=mask_rad, nframe=nframes,
                                  imlib=imlib, collapse=collapse,
@@ -113,12 +137,73 @@ def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
     if out_path is not None:
         redux_utils.to_fits(sub, out_path)
 
-    return sub, fwhm_mean
+    return sub, fwhm
 
 
-def PCA_vip(channelnums: list[int]) -> None:
-    print("channel nums: %s"%str(list(channelnums)))
-    print("not implemented")
+def PCA_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
+        out_path: str=None, mask_rad: float=10, do_opt: bool=False,
+        full_output: bool=False, sub_type: str="ASDI",
+        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+
+
+    fwhm, opt_scal, opt_flux = _prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
+
+
+
+    # algo args
+    ncomp = redux_utils.numcomps
+    nproc = redux_utils.numworkers
+    scaling = "temp-standard"
+    an_dist = np.linspace(np.min(angles), np.max(angles), nbranch, endpoint=True)
+    algo_dict = {"ncomp": ncomp, "imlib": "vip-fft", "interpolation": "lanczos4"}
+    rot_options = {"interp_zeros": True, "mask_val": 0}
+
+    
+
+    # Annular ASDI kws
+    if "annular" in sub_type:
+        mode = "annular"
+
+        kwkeys = kwargs.keys()
+        for kw in ["asize", "delta_rot", "delta_sep", "nframes"]:
+            if kw not in kwkeys:
+                print("The necessary kwargs for an annuluar ADI subtraction" + \
+                      "were not provided. Missing '%s' at least..."%kw)
+                return (None, None)
+            
+        asize = fwhm if kwargs["asize"] is None else kwargs["asize"]
+        delta_rot = kwargs["delta_rot"]
+        delta_sep = kwargs["delta_sep"]
+        nframes = kwargs["nframes"]
+    
+    
+
+    if sub_type == "PCA_single":
+        # Full-frame PCA-ASDI
+        # Single step
+        sub = pca(cubes, angles, scale_list=opt_scal, ncomp=ncomp,
+                adimsdi="single", crop_ifs=False, mask_center_px=mask_rad,
+                scaling=scaling, nproc=nproc, full_output=full_output,
+                **rot_options)
+    elif sub_type == "PCA_double":
+        # Double step
+        sub = pca(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
+                    adimsdi="double", crop_ifs=False, mask_center_px=mask_rad,
+                    interpolation=interpolation, scaling=scaling, nproc=nproc,
+                    full_output=full_output, **rot_options)
+    elif sub_type == "PCA_annular":
+        # Annular PCA-ASDI
+        # Double step
+        sub = pca_annular(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
+                    radius_int=mask_rad, asize=asize, fwhm=fwhm, nproc=nproc, full_output=full_output, **rot_options)
+    else:
+        print("The following subtraction type '%s' is not implemented"%sub_type)
+        return (None, None)
+
+    if out_path is not None:
+        redux_utils.to_fits(sub, out_path)
+
+    return sub, fwhm
 
 if __name__ == "__main__":
 

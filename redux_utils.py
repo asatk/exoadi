@@ -8,17 +8,21 @@ from vip_hci.fits import open_fits
 
 numworkers = 8      # number of worker threads/processes
 numcomps = 3        # number of PCA components
-everynthframe = 5   # number of frames 'n' selected from data cube
+everynthframe = 20  # number of frames 'n' selected from data cube
 chunksize = 20
 
-# get list of angles for de-rotation
-# >>>> figure out why angles are not the double precision as in the file
-angles_path = "data/parangs_bads_removed.txt"
-anglestable = ascii.read(angles_path, format="no_header", data_start=0)
-angles = anglestable['col1'].data
+def init(angles_path: str, wavelengths_path: str, frames: list[int]=..., channels: list[int]=...) -> tuple[np.ndarray, np.ndarray]:
+    # get list of angles for de-rotation
+    # >>>> figure out why angles are not the double precision as in the file
 
-# get list of wavelengths
-wavelengths = np.linspace(2.8, 4.2, 100, endpoint=True)
+    angles_table = ascii.read(angles_path, format="no_header", data_start=0)
+    angles = angles_table["col1"].data[frames].copy()
+
+    # get list of wavelengths for proper calibration and scaling
+    wavelengths_table =  ascii.read(wavelengths_path, format="no_header", data_start=0)
+    wavelengths = wavelengths_table["col1"].data[channels].copy()
+
+    return angles, wavelengths
 
 # >>>> add function to just open data instead of doing it w/in redux fn
 def loadchannel(path: str, verbose: bool=False) -> np.ndarray:
