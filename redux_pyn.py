@@ -165,10 +165,10 @@ def reduce_channel_pyn(data_dir: str, data_paths: list[str], out_dir: str=None, 
     pipeline.run()
 
     res_median = pipeline.get_data('pca_median')
-    redux_utils.savedata(res_median[0,], out_path%("median"))
+    redux_utils.to_fits(res_median[0,], out_path%("median"))
 
     res_mean = pipeline.get_data('pca_mean')
-    redux_utils.savedata(res_mean[0,], out_path%("mean"))
+    redux_utils.to_fits(res_mean[0,], out_path%("mean"))
     
     pixscale = pipeline.get_attribute('pca_median', 'PIXSCALE')
     size = pixscale * res_median.shape[-1]/2

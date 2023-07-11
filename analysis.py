@@ -5,6 +5,12 @@ from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
 
+from vip_hci.var import frame_center
+from vip_hci.metrics import completeness_curve, contrast_curve, detection, \
+    inverse_stim_map, significance, snr, snrmap, stim_map, throughput
+from vip_hci.fm import cube_planet_free, firstguess
+from vip_hci.psfsub import pca, pca_annular
+
 import redux_utils
 
 def plot_redux(name, zscale=True, save=True):
@@ -92,6 +98,72 @@ def plot_redux(name, zscale=True, save=True):
     if save:
         fig.savefig(out_path)
     # plt.show()
+
+def calc_stats(pl_data, fwhm):
+    pl_loc = (12, 41)
+    # st_loc = (63//2, 63//2)
+    c_loc = frame_center(pl_data)
+    pl_rad = np.sqrt(np.sum(np.square(np.array(c_loc) - np.array(pl_loc))))
+    pl_snr = snr(pl_data, pl_loc, fwhm=fwhm, exclude_negative_lobes=True, plot=True)
+    pl_sgn = significance(pl_snr, pl_rad, fwhm, student_to_gauss=True)
+    print(pl_snr, pl_sgn)
+
+def find_planet(cube, angles, psfn, pl_loc, fwhm, annulus_width, aperture_radius):
+
+    ncomp = redux_utils.numcomps
+
+    pl_rad, pl_theta, pl_flux = firstguess(cube, angles, psfn, ncomp, pl_loc, fwhm, annulus_width, aperture_radius, simplex=True, plot=True, verbose=True)
+
+def detect_planet(pl_data, pl_loc, fwhm):
+    # snr, sig, snrmap, STIM map
+
+    c_loc = frame_center(pl_data)
+    pl_rad = np.sqrt(np.sum(np.square(np.array(c_loc) - np.array(pl_loc))))
+
+    pl_snr = snr(pl_data, pl_loc, fwhm=fwhm, exclude_negative_lobes=True, plot=True)
+    pl_sgn = significance(pl_snr, pl_rad, fwhm, student_to_gauss=True)
+    pl_snrmap = snrmap(pl_data, fwhm, plot=True, approximated=False)
+    pl_inv_stimmap = inverse_stim_map
+    pl_stimmap = stim_map
+
+    print(pl_snr, pl_sgn)
+
+def ccurves(cube, angles, psfn, fwhm, algo=pca, simplex_data=None, pl_loc=None):
+
+    if simplex_data is None:
+        simplex_data = find_planet(cube, angles, psfn, pl_loc, fwhm)
+    
+    pl_rad, pl_theta, pl_flux = simplex_data
+    ncomp = redux_utils.numcomps
+    nbranch = 2
+
+    c_loc = frame_center(cube[0,0])
+    pl_loc = (c_loc[0] + pl_rad * np.cos(pl_theta), c_loc[1] + pl_rad * np.sin(pl_theta))
+
+    
+    pp_cube = pca_annular(cube, angles, ncomp=ncomp)
+    det = detection(pp_cube, fwhm=fwhm, psf=psfn, bkg_sigma=5, debug=False, mode='log', snr_thresh=5, plot=True, verbose=True)
+
+    # Throughput calculation
+    cube_emp = cube_planet_free([pl_rad, pl_theta, pl_flux], cube, angles, psfn)
+
+    
+    # pca_emp = pca(cube_emp, angs, ncomp, verbose=True)
+    res_thru = throughput(cube_emp, angles, psfn, fwhm, ncomp, algo=algo, nbranch=nbranch)
+
+    
+    # ff pca
+    cc_ff = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot, algo=pca, sigma=5, nbranch=nbranch, ncomp=ncomp, debug=True)
+
+    drot = 0.5
+    # ann pca
+    cc_ann = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot, algo=pca_annular, sigma=5, nbranch=nbranch, delta_rot=drot, ncomp=ncomp, radius_int=int(fwhm), debug=True)
+    
+    an_dist = np.linspace(np.min(angles, np.max(angles), nbranch))
+    algo_dict = {'ncomp': ncomp, 'imlib': 'opencv'}
+    an_dist, comp_curve = completeness_curve(cube_emp, angles, psfn, fwhm, algo, an_dist=an_dist, pxscale=pxscale, ini_contrast=None, starphot=starphot, plot=True, nproc=None, algo_dict=algo_dict)
+
+    # include completeness map?
 
 if __name__ == "__main__":
 
