@@ -68,12 +68,14 @@ if __name__ == "__main__":
     channels = list(range(first_chnl, last_chnl + 1))
     nchnls = len(channels)
     frames = range(0, nframes, redux_utils.everynthframe)
+    ncomp = redux_utils.numcomps
     # --- DATA INFO --- #
 
 
     # --- RUN INFO --- #
     lib = "vip"
     algo = "PCA"
+    algo_text = algo if "PCA" not in algo else "PCA%03i"%ncomp
     sub_type = "single"
     full_output = False
     # --- RUN INFO --- #
@@ -85,11 +87,9 @@ if __name__ == "__main__":
     data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
     data_paths = [data_path%i for i in channels]
 
-    # outchannel_path = None
-    # outchannel_paths = [outchannel_path] * nchnls
-    # outchannel_path = f"./out/{lib}{algo}-{sub_type}_%03i.fits"
-    # outchannel_paths = [outchannel_path%i for i in channelnums]
-    outcombined_path = f"./out/{lib}{algo}-{sub_type}_{first_chnl}-{last_chnl}_skip{redux_utils.everynthframe}.fits"
+    name = redux_utils.make_name(lib, algo, sub_type, first_chnl, last_chnl, ncomp=ncomp, nskip_frames=redux_utils.everynthframe)
+
+    outcombined_path = "./out/%s.fits"%name
     # --- PATHS --- #
 
 

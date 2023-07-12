@@ -17,7 +17,7 @@ pxscale = 0.027
 drot = 0.5
 rot_options = {'mask_val': 0, 'interp_zeros': True, 'imlib': 'vip-fft', 'interpolation': 'lanczos4'}
 
-def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
+def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False, debug: bool=False):
     '''
     Iterate over wavelength channels to find opt spatial- and flux-scaling factors for each
     '''
@@ -29,7 +29,7 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
         time_cubes = [cubes[:, i] for i in range(n_frames)]
         input_list = list(zip(time_cubes, np.repeat([wavelengths], n_frames, axis=0), 
                     np.repeat([flux_st], n_frames, axis=0), np.repeat([mask], n_frames, axis=0),
-                    np.repeat([2], n_frames), np.repeat(["stddev"], n_frames)))
+                    np.repeat([2], n_frames), np.repeat(["stddev"], n_frames), np.repeat([debug], n_frames)))
 
         with mp.Pool(redux_utils.numworkers) as pool:
             output = np.array(pool.starmap(find_scal_vector, input_list, chunksize=redux_utils.chunksize))
@@ -41,14 +41,14 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
         opt_flux = np.median(opt_fluxes, axis=0)
 
     else:
-        opt_scal, opt_flux = find_scal_vector(np.mean(cubes, axis=1), wavelengths, flux_st, mask=mask, nfp=2, fm="stddev")
+        opt_scal, opt_flux = find_scal_vector(np.mean(cubes, axis=1), wavelengths, flux_st, mask=mask, nfp=2, fm="stddev", debug=debug)
 
     return opt_scal, opt_flux
 
 
 def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
-         psf: np.ndarray=None,
-         do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
+         psf: np.ndarray=None, ret_fwhm_list: bool=False, verbose: bool=False,
+         debug: bool=False, do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
     '''
     Prepare key arguments required in the post-processing algorithms in VIP.
     These arguments are the FWHM of the PSF before normalization, the optimal
@@ -60,13 +60,14 @@ def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
         psf = np.median(cubes, axis=1)
 
     # get flux and fwhm of host star in each channel
-    psfn, flux_st, fwhm_list = normalize_psf(psf, fwhm="fit", full_output=True, debug=False)
-    fwhm = np.mean(fwhm_list)
+    psfn, flux_st, fwhm_list = normalize_psf(psf, fwhm="fit", full_output=True,
+                                             verbose=verbose, debug=debug)
+    fwhm = fwhm_list if ret_fwhm_list else np.mean(fwhm_list)
 
     #pixel diameter of star
     mask = mask_circle(np.ones_like(cubes[0,0]), mask_rad)
 
-    opt_scal, opt_flux = calc_scal(cubes, wavelengths, flux_st, mask, do_opt=do_opt)
+    opt_scal, opt_flux = calc_scal(cubes, wavelengths, flux_st, mask, do_opt=do_opt, debug=debug)
 
     return fwhm, psfn, opt_scal, opt_flux
 
@@ -171,30 +172,42 @@ def PCA_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
         delta_sep = (0.1, 1.0) if kwargs["delta_sep"] is None else kwargs["delta_sep"]
         n_segments = "auto" if kwargs["n_segments"] is None else kwargs["n_segments"]
 
+
+    # Commons args btwn all algos: cubes, angles, scale_list, nproc, full_output
+    # interpolation, imlib, rot_options. Could pass as dict.
+
+    # For ccurves and other ops, could abstract away the args themselves.
+    # Perhaps even save as config/json file.
+
+    args_sng = {"cube": cubes, "angle_list": angles, "scale_list": opt_scal,
+                "ncomp": ncomp, "adimsdi":"single", "crop_ifs": False,
+                "mask_center_px": mask_rad, "scaling": scaling, "nproc": nproc,
+                "full_output": full_output, **rot_options}
+    
+    args_dbl = {"cube": cubes, "angle_list": angles, "scale_list": opt_scal,
+                "ncomp": (ncomp, ncomp), "adimsdi":"double", "crop_ifs": False,
+                "mask_center_px": mask_rad, "scaling": scaling, "nproc": nproc,
+                "full_output": full_output, **rot_options}
+    
+    args_ann = {"cube": cubes, "angle_list": angles, "scale_list": opt_scal,
+                "ncomp": (ncomp, ncomp), "asize": asize, "fwhm": fwhm,
+                "delta_rot": delta_rot, "delta_sep": delta_sep,
+                "n_segments": n_segments, "radius_int": mask_rad,
+                "nproc": nproc, "full_output": full_output, **rot_options}
     
     if sub_type == "single":
         # Full-frame PCA-ASDI
         # Single step
-        pp_sng = pca(cubes, angles, scale_list=opt_scal, ncomp=ncomp,
-                adimsdi="single", crop_ifs=False, mask_center_px=mask_rad,
-                scaling=scaling, nproc=nproc, full_output=full_output,
-                **rot_options)
+        pp_sng = pca(**args_sng)
         pp_res = pp_sng
     elif sub_type == "double":
         # Double step
-        pp_dbl = pca(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
-                    adimsdi="double", crop_ifs=False, mask_center_px=mask_rad,
-                    interpolation=interpolation, scaling=scaling, nproc=nproc,
-                    full_output=full_output, **rot_options)
+        pp_dbl = pca(**args_dbl)
         pp_res = pp_dbl
     elif sub_type == "annular":
         # Annular PCA-ASDI
         # Double step
-        pp_ann = pca_annular(cubes, angles, scale_list=opt_scal, nproc=nproc,
-                          ncomp=(ncomp, ncomp), asize=asize, fwhm=fwhm,
-                          delta_rot=delta_rot, delta_sep=delta_sep,
-                          n_segments=n_segments, radius_int=mask_rad,
-                          full_output=full_output, **rot_options)
+        pp_ann = pca_annular(**args_ann)
         if full_output:
             pp_res = pp_ann[2, 0, 1]
         else:
@@ -223,17 +236,11 @@ if __name__ == "__main__":
     angles_path = "data/parang_bads_removed.txt"
     wavelengths_path = "data/channel_wavelengths.txt"
 
-    # outchannel_path = None
-    # outchannel_paths = [outchannel_path] * nchnls
-    outchannel_path = "./out/vipADI_%05i_median.fits"
-    outchannel_paths = [outchannel_path%i for i in channelnums]
-    outcombined_path = "./out/vipADI_%05i_%05i_median.fits"%(firstchannelnum, lastchannelnum)
+    outcombined_path = "./out/%s.fits"%("temp_output")
     # --- PATHS --- #
 
     # --- DATA --- #
     cubes, wavelengths, angles = redux_utils.init(data_paths, wavelengths_path, angles_path, channels=channelnums, frames=frames)
     # --- DATA --- #
     
-
-    # ASDI_vip(cube_skipped, angles_skipped, combine_fn=np.mean, collapse_channel="median", out_path=outcombined_path, outchannel_paths=outchannel_paths)
     ASDI_vip(cubes, wavelengths, angles, out_path=outcombined_path, do_opt=False, sub_type="ASDI")

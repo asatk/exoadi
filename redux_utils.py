@@ -9,6 +9,7 @@ numworkers = 8      # number of worker threads/processes
 numcomps = 3        # number of PCA components
 everynthframe = 20  # number of frames 'n' selected from data cube
 chunksize = 20
+pxscale = 0.027
 
 def init(data_paths: list[str], wavelengths_path: str, angles_path: str, channels: list[int]=..., frames: list[int]=...) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''
@@ -54,6 +55,16 @@ def to_fits(data: np.ndarray, path: str, overwrite: bool=True) -> None:
 def to_npy(data: np.ndarray, path: str, overwrite: bool=True) -> None:
     if isfile(path) and overwrite or not isfile(path):
         np.save(path, data)
+
+def make_name(lib: str, algo: str, sub_type: str, first_chnl: str, last_chnl: str, ncomp: int=None, nskip_frames: int=None) -> str:
+    if ncomp is None:
+        ncomp = numcomps
+    if nskip_frames is None:
+        nskip_frames = everynthframe
+    
+    algo_text = algo if "PCA" not in algo else "PCA%03i"%ncomp
+    name = f"{lib}{algo_text}-{sub_type}_{first_chnl}-{last_chnl}_skip{nskip_frames}"
+    return name
 
 def combine(channels: np.ndarray,
         combine_fn: Callable[[np.ndarray], np.ndarray]=np.median,
