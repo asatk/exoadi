@@ -1,47 +1,58 @@
 from astropy.io import ascii
-from astropy.io import fits
 import multiprocessing as mp
 import numpy as np
 from os.path import isfile
 from typing import Callable
-from vip_hci.fits import open_fits
+from vip_hci.fits import open_fits, write_fits
 
 numworkers = 8      # number of worker threads/processes
 numcomps = 3        # number of PCA components
 everynthframe = 20  # number of frames 'n' selected from data cube
 chunksize = 20
 
-def init(angles_path: str, wavelengths_path: str, frames: list[int]=..., channels: list[int]=...) -> tuple[np.ndarray, np.ndarray]:
-    # get list of angles for de-rotation
+def init(data_paths: list[str], wavelengths_path: str, angles_path: str, channels: list[int]=..., frames: list[int]=...) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    '''
+    Get all data given the specified frames and channels to use.
+
+    Returns a 4D data cube associated with all channels and frames, a list of
+    angles that correspond to the frames, and a list of wavelengths that
+    correspond to the channels.
+    '''
+
     # >>>> figure out why angles are not the double precision as in the file
 
-    angles_table = ascii.read(angles_path, format="no_header", data_start=0)
-    angles = angles_table["col1"].data[frames].copy()
+    # load data cube for each desired channel and frame as 4D cube
+    cubes = loadall(data_paths)[:, frames].copy()
 
     # get list of wavelengths for proper calibration and scaling
-    wavelengths_table =  ascii.read(wavelengths_path, format="no_header", data_start=0)
-    wavelengths = wavelengths_table["col1"].data[channels].copy()
+    wavelengths = loadtbl(wavelengths_path, index=channels)
 
-    return angles, wavelengths
+    # get list of angles for de-rotation
+    angles = loadtbl(angles_path, index=frames)
+
+    return cubes, wavelengths, angles
+
+def loadtbl(path: str, index: list[int]=...) -> np.ndarray:
+    table = ascii.read(path, format="no_header", data_start=0)
+    data = table["col1"].data[index].copy()
+    return data
 
 # >>>> add function to just open data instead of doing it w/in redux fn
-def loadchannel(path: str, verbose: bool=False) -> np.ndarray:
+def loadone(path: str, verbose: bool=False) -> np.ndarray:
     return open_fits(path, verbose=verbose)
 
 def loadall(paths: list[str], verbose: bool=False) -> np.ndarray:
     with mp.Pool(numworkers) as pool:
-        return np.array(pool.starmap(loadchannel, zip(paths, np.repeat([verbose], len(paths)))))
+        return np.array(pool.starmap(loadone, zip(paths, np.repeat([verbose], len(paths)))))
 
 # save numpy array to specified path as .FITS file
 def to_fits(data: np.ndarray, path: str, overwrite: bool=True) -> None:
-    hdul = fits.HDUList()
-    hdul.append(fits.PrimaryHDU())
-    hdul.append(fits.ImageHDU(data=data))
-    hdul.writeto(path, overwrite=overwrite)
+    if isfile(path) and overwrite or not isfile(path):
+        write_fits(path, data)
 
 # save numpy array to specified path as .npy file
 def to_npy(data: np.ndarray, path: str, overwrite: bool=True) -> None:
-    if isfile(path) and not overwrite:
+    if isfile(path) and overwrite or not isfile(path):
         np.save(path, data)
 
 def combine(channels: np.ndarray,

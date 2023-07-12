@@ -1,85 +1,34 @@
+from matplotlib import pyplot as plt
 import numpy as np
 
 import analysis
 import redux_utils
+from redux_vip import prep
+from analysis import detect_planet, find_planet
 
 
+def postproc(cubes, wavelengths, angles, lib: str="vip", algo: str="ASDI",
+             sub_type: str=None, full_output: bool=False,
+             channel_combine_fn=np.median, combine_fn=np.median,
+             annular_kwargs: dict=None) -> np.ndarray:
 
+    if annular_kwargs is None:
+        annular_kwargs = {"asize": None, "delta_rot": None, "delta_sep": None,
+                          "nframes": None, "n_segments": None}
 
-if __name__ == "__main__":
-
-    # in the future these parameters will change upon running script
-
-    # Load important derotation angle and channel wavelength data
-    angles_path = "data/parangs_bads_removed.txt"
-    wavelengths_path = "data/channel_wavelengths.txt"
-    angles, wavelengths = redux_utils.init(angles_path, wavelengths_path)
-
-    # --- DATA INFO --- #
-    # datafilenum = 52
-    xdim = 63
-    ydim = 63
-    firstchannelnum = 45
-    lastchannelnum = 74
-    channelnums = list(range(firstchannelnum, lastchannelnum + 1))
-    nchnls = len(channelnums)
-    angles_skipped = angles[::redux_utils.everynthframe]
-    wavelengths_selected = wavelengths[firstchannelnum:lastchannelnum + 1]
-    # --- DATA INFO --- #
-
-    # --- PATHS --- #
-    data_dir = "./data"
-    out_dir = "./out"
-    data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
-    data_paths = [data_path%i for i in channelnums]
-    # --- PATHS --- #
-
-    # --- COMBINE INFO --- #
-    combine_fn = np.median
-    channel_combine_fn = np.median
-    collapse_channel = "median"
-    # --- COMBINE INFO --- #
-
-    # --- RUN INFO --- #
-    mode = 1
-    algo = "ASDI"
-    # redux_utils.numworkers = 8
-    # --- RUN INFO --- #
-
-    # --- DATA --- #
-    cube = redux_utils.loadall([data_path%num for num in channelnums])
-    cube_skipped = cube[:, ::redux_utils.everynthframe]
-    
-    if mode == 0:       # Classical ADI
+    if lib == "npy":       # Classical ADI
         import redux_npy
 
-        # outchannel_path = None
-        # outchannel_paths = [outchannel_path] * nchnls
-        outchannel_path = "./out/cADI_%05i_mean.fits"
-        outchannel_paths = [outchannel_path%i for i in channelnums]
-        outcombined_path = "./out/cADI_median_%05i_%05i_%02i.fits"%(firstchannelnum, lastchannelnum, redux_utils.everynthframe)
-
-        redux_npy.combine_ADI_npy(cube_skipped, angles_skipped, combine_fn=combine_fn,
-            channel_combine_fn=channel_combine_fn, save_fn=redux_utils.to_fits,
-            out_path=outcombined_path, outchannel_paths=outchannel_paths)
+        pp_cubes = redux_npy.combine_ADI_npy(cubes, angles, combine_fn=combine_fn,
+            channel_combine_fn=channel_combine_fn)
         
-    elif mode == 1:     # VIP ADI
+    elif lib == "vip":     # VIP ADI
         import redux_vip
-        
-        # outchannel_path = None
-        # outchannel_paths = [outchannel_path] * nchnls
-        outchannel_path = "./out/vipADI_%05i_median.fits"
-        outchannel_paths = [outchannel_path%i for i in channelnums]
-        outcombined_path = "./out/vip%s_median_%05i_%05i_%02i.fits"%(algo, firstchannelnum, lastchannelnum, redux_utils.everynthframe)
-
-        annular_kwargs = {}
 
         if algo == "ASDI":
-            med_asdi, fwhm = redux_vip.ASDI_vip(
-                cube=cube, wavelengths=wavelengths, angles=angles,
-                out_path=outcombined_path, do_opt=False, kwargs=annular_kwargs)
-            
-            # analysis.calc_stats(med_asdi, fwhm)
+            pp_cubes = redux_vip.ASDI_vip(cubes, wavelengths, angles,
+                do_opt=False, full_output=full_output, sub_type=sub_type,
+                **annular_kwargs)
 
         # elif algo == "ANDROMEDA":
         #     pass
@@ -93,19 +42,76 @@ if __name__ == "__main__":
         #     pass
         # elif algo == "PACO":
         #     pass
-        # elif algo == "PCA":
-        #     redux_vip.PCA_vip(channelnums)
+        elif algo == "PCA":
+            pp_cubes = redux_vip.PCA_vip(cubes, wavelengths, angles,
+                do_opt=False, full_output=full_output, sub_type=sub_type,
+                **annular_kwargs)
         # elif algo == "TRAP":
         #     pass
         else:
             print("Algorithm '%s' not supported for VIP analysis"%algo)
-        
-    # elif mode == 2:     # PynPoint ADI
-    #     import redux_pyn
+            pp_cubes = None
 
-    #     data_path = data_dir + "/" + "005_center_multishift/wl_channel_%05i.fits"
-    #     data_paths = [data_path%(channelnum) for channelnum in channelnums]
-    #     outcombined_path = "./out/pyn_PCA%03i_%05i_%05i.fits"%(redux_utils.numcomps, firstchannelnum, lastchannelnum)
+    return pp_cubes
 
-    #     redux_pyn.reduce_channel_pyn(data_dir, data_paths, out_dir=out_dir,
-    #             out_path=outcombined_path)
+
+if __name__ == "__main__":
+
+    # in the future these parameters will change upon running script
+
+    # --- DATA INFO --- #
+    xdim = 63
+    ydim = 63
+    nframes = 2202
+    first_chnl = 45
+    last_chnl = 74
+    channels = list(range(first_chnl, last_chnl + 1))
+    nchnls = len(channels)
+    frames = range(0, nframes, redux_utils.everynthframe)
+    # --- DATA INFO --- #
+
+
+    # --- RUN INFO --- #
+    lib = "vip"
+    algo = "PCA"
+    sub_type = "single"
+    full_output = False
+    # --- RUN INFO --- #
+
+
+    # --- PATHS --- #
+    data_dir = "./data"
+    out_dir = "./out"
+    data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
+    data_paths = [data_path%i for i in channels]
+
+    # outchannel_path = None
+    # outchannel_paths = [outchannel_path] * nchnls
+    # outchannel_path = f"./out/{lib}{algo}-{sub_type}_%03i.fits"
+    # outchannel_paths = [outchannel_path%i for i in channelnums]
+    outcombined_path = f"./out/{lib}{algo}-{sub_type}_{first_chnl}-{last_chnl}_skip{redux_utils.everynthframe}.fits"
+    # --- PATHS --- #
+
+
+    # --- COMBINE INFO --- #
+    combine_fn = np.median
+    channel_combine_fn = np.median
+    collapse_channel = "median"
+    # --- COMBINE INFO --- #
+
+
+    # --- DATA --- #
+    # Load important derotation angle and channel wavelength data
+    angles_path = "data/parangs_bads_removed.txt"
+    wavelengths_path = "data/channel_wavelengths.txt"
+    cubes, wavelengths, angles = redux_utils.init(data_paths, wavelengths_path, angles_path, channels=channels, frames=frames)
+    # --- DATA --- #
+
+    pp_data = postproc(cubes, wavelengths, angles, lib=lib, algo=algo,
+        sub_type=sub_type, full_output=full_output)
+    if full_output:
+        pp_frame = pp_data[0]
+    else:
+        pp_frame = pp_data
+
+    redux_utils.to_fits(pp_frame, outcombined_path, overwrite=True)

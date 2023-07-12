@@ -4,7 +4,9 @@ from astropy.visualization import ZScaleInterval
 from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
+import os
 
+from hciplot import plot_frames, plot_cubes
 from vip_hci.var import frame_center
 from vip_hci.metrics import completeness_curve, contrast_curve, detection, \
     inverse_stim_map, significance, snr, snrmap, stim_map, throughput
@@ -12,6 +14,7 @@ from vip_hci.fm import cube_planet_free, firstguess
 from vip_hci.psfsub import pca, pca_annular
 
 import redux_utils
+from redux_vip import prep
 
 def plot_redux(name, zscale=True, save=True):
 
@@ -108,27 +111,60 @@ def calc_stats(pl_data, fwhm):
     pl_sgn = significance(pl_snr, pl_rad, fwhm, student_to_gauss=True)
     print(pl_snr, pl_sgn)
 
-def find_planet(cube, angles, psfn, pl_loc, fwhm, annulus_width, aperture_radius):
+def find_planet(cube: np.ndarray, angles: np.ndarray, psfn: np.ndarray,
+        pl_loc: list[np.ndarray], fwhm: float, annulus_width: float=4,
+        aperture_radius: float=1) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     ncomp = redux_utils.numcomps
+    pl_rad, pl_theta, pl_flux = firstguess(cube, angles, psfn, ncomp, pl_loc,
+        fwhm, annulus_width, aperture_radius, simplex=True, plot=True,
+        verbose=True)
 
-    pl_rad, pl_theta, pl_flux = firstguess(cube, angles, psfn, ncomp, pl_loc, fwhm, annulus_width, aperture_radius, simplex=True, plot=True, verbose=True)
+    return pl_rad, pl_theta, pl_flux
 
-def detect_planet(pl_data, pl_loc, fwhm):
+def detect_planet(pp_frame, pl_loc, fwhm, plot=False):
     # snr, sig, snrmap, STIM map
 
-    c_loc = frame_center(pl_data)
+    c_loc = frame_center(pp_frame)
     pl_rad = np.sqrt(np.sum(np.square(np.array(c_loc) - np.array(pl_loc))))
 
-    pl_snr = snr(pl_data, pl_loc, fwhm=fwhm, exclude_negative_lobes=True, plot=True)
+    pl_snr = snr(pp_frame, pl_loc, fwhm=fwhm, exclude_negative_lobes=True, plot=plot)
     pl_sgn = significance(pl_snr, pl_rad, fwhm, student_to_gauss=True)
-    pl_snrmap = snrmap(pl_data, fwhm, plot=True, approximated=False)
-    pl_inv_stimmap = inverse_stim_map
-    pl_stimmap = stim_map
+    map_snr = snrmap(pp_frame, fwhm, plot=plot, approximated=False)
+    # map_inv_stim = inverse_stim_map
+    # map_stim = stim_map
 
     print(pl_snr, pl_sgn)
 
-def ccurves(cube, angles, psfn, fwhm, algo=pca, simplex_data=None, pl_loc=None):
+    return pl_snr, pl_sgn, map_snr
+
+def ccurves(cubes, angles, psfn, fwhm, pl_loc, ncomp, nbranch, algo=pca):
+
+    cube_0 = cubes[0]
+    psfn_0 = psfn[0]
+    pxscale = 0.027
+
+    pl_rad, pl_theta, pl_flux = firstguess(cube_0, angles, psfn_0, ncomp, [pl_loc], fwhm=fwhm, simplex=True, plot=True, verbose=True)
+
+    cubes_pf = cube_planet_free([pl_rad, pl_theta, pl_flux], cubes, angles, psfn)
+
+    res_thru = throughput(cubes_pf, angles, psfn, fwhm, ncomp, algo=algo, nbranch=nbranch)
+    thru = res_thru[0]
+    plt.plot(thru[0])
+    plt.show()
+
+    if algo is pca:
+        cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale, starphot=pl_flux, algo=pca, sigma=5, nbranch=nbranch, ncomp=ncomp, debug=True)
+    elif algo is pca_annular:
+        cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale, starphot=pl_flux, algo=pca_annular, sigma=5, nbranch=nbranch, ncomp=ncomp, radius_int=int(fwhm), debug=True)
+
+    return cc
+
+
+def _ccurves(cube, angles, psfn, fwhm, algo=pca, simplex_data=None, pl_loc=None):
+
+    # an_dist = np.linspace(np.min(angles), np.max(angles), nbranch, endpoint=True)
+    # algo_dict = {"ncomp": ncomp, "imlib": "vip-fft", "interpolation": "lanczos4"}
 
     if simplex_data is None:
         simplex_data = find_planet(cube, angles, psfn, pl_loc, fwhm)
@@ -136,9 +172,12 @@ def ccurves(cube, angles, psfn, fwhm, algo=pca, simplex_data=None, pl_loc=None):
     pl_rad, pl_theta, pl_flux = simplex_data
     ncomp = redux_utils.numcomps
     nbranch = 2
+    pxscale = 0.027
+    starphot = 1000
+
 
     c_loc = frame_center(cube[0,0])
-    pl_loc = (c_loc[0] + pl_rad * np.cos(pl_theta), c_loc[1] + pl_rad * np.sin(pl_theta))
+    pl_loc = c_loc + pl_rad * np.array([np.cos(pl_theta * np.pi / 180), np.sin(pl_theta * np.pi / 180)])
 
     
     pp_cube = pca_annular(cube, angles, ncomp=ncomp)
@@ -153,48 +192,88 @@ def ccurves(cube, angles, psfn, fwhm, algo=pca, simplex_data=None, pl_loc=None):
 
     
     # ff pca
-    cc_ff = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot, algo=pca, sigma=5, nbranch=nbranch, ncomp=ncomp, debug=True)
+    cc_ff = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot=pl_flux, algo=pca, sigma=5, nbranch=nbranch, ncomp=ncomp, debug=True)
 
     drot = 0.5
     # ann pca
-    cc_ann = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot, algo=pca_annular, sigma=5, nbranch=nbranch, delta_rot=drot, ncomp=ncomp, radius_int=int(fwhm), debug=True)
+    cc_ann = contrast_curve(cube_emp, angles, psfn, fwhm, pxscale, starphot=pl_flux, algo=pca_annular, sigma=5, nbranch=nbranch, delta_rot=drot, ncomp=ncomp, radius_int=int(fwhm), debug=True)
     
     an_dist = np.linspace(np.min(angles, np.max(angles), nbranch))
     algo_dict = {'ncomp': ncomp, 'imlib': 'opencv'}
-    an_dist, comp_curve = completeness_curve(cube_emp, angles, psfn, fwhm, algo, an_dist=an_dist, pxscale=pxscale, ini_contrast=None, starphot=starphot, plot=True, nproc=None, algo_dict=algo_dict)
+    an_dist, comp_curve = completeness_curve(cube_emp, angles, psfn, fwhm, algo, an_dist=an_dist, pxscale=pxscale, ini_contrast=None, starphot=pl_flux, plot=True, nproc=None, algo_dict=algo_dict)
 
     # include completeness map?
 
 if __name__ == "__main__":
 
-    # name = "cADI_mean_00040_00080_every05"
-
-    names = [
-        "cADI_median_00010_00090",
-        "cADI_median_00040_00080",
-        "cADI_mean_00010_00090",
-        "cADI_mean_00040_00080",
-        "cADI_mean_00040_00080_every05",
-        "cADI_mean_00040_00080_every10",
-        "cADI_mean_00040_00080_every20",
-        "cADI_mean_00040_00080_every50",
-        "vipADI_median_00010_00090",
-        "vipADI_median_00040_00080",
-        "vipADI_mean_00010_00090",
-        "vipADI_mean_00040_00080",
-        "pyn_PCA003_00040_00080_median",
-        "pyn_PCA003_00040_00080_median_PREPPED",
-        "pyn_PCA003_00045_00074_median",
-        "pyn_PCA003_00045_00074_mean",
-        # "pyn_PCA005_00045_00074_median",
-        # "pyn_PCA005_00045_00074_mean",
-        "pyn_PCA020_00040_00080_median",
-    ]
-
     # names = [
-    #     "pyn_PCA005_00045_00074_median",
-    #     "pyn_PCA005_00045_00074_mean",
+    #     "cADI_median_00010_00090",
+    #     "cADI_median_00040_00080",
+    #     "cADI_mean_00010_00090",
+    #     "cADI_mean_00040_00080",
+    #     "cADI_mean_00040_00080_every05",
+    #     "cADI_mean_00040_00080_every10",
+    #     "cADI_mean_00040_00080_every20",
+    #     "cADI_mean_00040_00080_every50",
+    #     "vipADI_median_00010_00090",
+    #     "vipADI_median_00040_00080",
+    #     "vipADI_mean_00010_00090",
+    #     "vipADI_mean_00040_00080",
+    #     "pyn_PCA003_00040_00080_median",
+    #     "pyn_PCA003_00040_00080_median_PREPPED",
+    #     "pyn_PCA003_00045_00074_median",
+    #     "pyn_PCA003_00045_00074_mean",
+    #     "pyn_PCA020_00040_00080_median",
     # ]
 
-    with mp.Pool(redux_utils.numworkers) as pool:
-        pool.map(plot_redux, names)
+    # with mp.Pool(redux_utils.numworkers) as pool:
+    #     pool.map(plot_redux, names)
+
+    lib = "vip"
+    algo = "PCA"
+    sub_type = "single"
+    first_chnl = 45
+    last_chnl = 74
+    nframes = 2202
+    channels = list(range(first_chnl, last_chnl))
+    frames = range(0, nframes, redux_utils.everynthframe)
+    ncomp = redux_utils.numcomps
+    nbranch = 1
+
+    data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
+    data_paths = [data_path%i for i in channels]
+    pp_path = f"./out/{lib}{algo}-{sub_type}_{first_chnl}-{last_chnl}_skip{redux_utils.everynthframe}.fits"
+    wavelengths_path = "data/channel_wavelengths.txt"
+    angles_path = "data/parangs_bads_removed.txt"
+
+    # cubes, wavelengths, angles = redux_utils.init(data_paths, wavelengths_path,
+    #     angles_path, channels=channels, frames=frames)
+    
+    pp_frame = redux_utils.loadone(pp_path)
+
+    # fwhm, psfn, opt_scal, opt_flux = prep(cubes, wavelengths)
+
+    fwhm = 3.239077
+
+    title = f"{algo} ({sub_type}): $\lambda$={first_chnl}-{last_chnl}, skip {redux_utils.everynthframe}"
+
+    plot_kwargs = {}
+
+    pl_loc = (11, 40)
+    pl_snr, pl_sgn, map_snr = detect_planet(pp_frame, pl_loc, fwhm, plot=False)
+
+    out_path = f"out/{algo}-{sub_type}_{first_chnl}-{last_chnl}_skip{redux_utils.everynthframe}.png"
+    fig, ax = plot_frames(map_snr, colorbar=True, title=title, return_fig_ax=True, **plot_kwargs)
+    datastr = r'S/N = $%.03f$'%(pl_snr) + '\n' + r'sig = $%.03f\sigma$'%(pl_sgn)
+    ax.text(0.675, 0.85, datastr, fontsize=12, transform=ax.transAxes,
+            bbox=dict(facecolor='#f5f5dc', alpha=0.5))
+    fig.savefig(out_path)
+    
+
+    '''
+    Planet 0: simplex result: (r, theta, f)=(21.403, 154.730, 45.632) at 
+          (X,Y)=(11.65, 40.14)
+    '''
+    # ccurves(cubes, angles, psfn, fwhm, pl_loc, ncomp, nbranch)
+
+

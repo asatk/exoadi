@@ -46,8 +46,9 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False):
     return opt_scal, opt_flux
 
 
-def _prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
-          do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
+def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
+         psf: np.ndarray=None,
+         do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
     '''
     Prepare key arguments required in the post-processing algorithms in VIP.
     These arguments are the FWHM of the PSF before normalization, the optimal
@@ -55,7 +56,8 @@ def _prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
     '''
 
     # model psf - take median along time axis - beware of companion smearing
-    psf = np.median(cubes, axis=1)
+    if psf is None:
+        psf = np.median(cubes, axis=1)
 
     # get flux and fwhm of host star in each channel
     psfn, flux_st, fwhm_list = normalize_psf(psf, fwhm="fit", full_output=True, debug=False)
@@ -66,157 +68,160 @@ def _prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
 
     opt_scal, opt_flux = calc_scal(cubes, wavelengths, flux_st, mask, do_opt=do_opt)
 
-    return fwhm, opt_scal, opt_flux
+    return fwhm, psfn, opt_scal, opt_flux
 
 def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
-        out_path: str=None, mask_rad: float=10, do_opt: bool=False,
-        full_output: bool=False, sub_type: str="ASDI",
-        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        mask_rad: float=10, do_opt: bool=False, full_output: bool=False,
+        sub_type: str="ASDI", **kwargs) -> np.ndarray:
 
 
-    fwhm, opt_scal, opt_flux = _prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
+    fwhm, _, opt_scal, opt_flux = prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
 
 
     # algo args
-    ncomp = redux_utils.numcomps
     nproc = redux_utils.numworkers
-    scaling = "temp-standard"
-    an_dist = np.linspace(np.min(angles), np.max(angles), nbranch, endpoint=True)
-    algo_dict = {'ncomp': ncomp, 'imlib': "vip-fft", "interpolation": "lanczos4"}
+    imlib = "vip-fft"
+    interpolation ="lanczos4"
     rot_options = {"interp_zeros": True, "mask_val": 0}
     combine_fn = np.median
-
+    nchnls = len(wavelengths)
 
 
     # Annular ASDI kws
     if "annular" in sub_type:
-        mode = "annular"
 
         kwkeys = kwargs.keys()
         for kw in ["asize", "delta_rot", "delta_sep", "nframes"]:
             if kw not in kwkeys:
                 print("The necessary kwargs for an annuluar ADI subtraction" + \
-                      "were not provided. Missing '%s' at least..."%kw)
-                return (None, None)
+                      " were not provided. Missing '%s' at least..."%kw)
+                return None
             
         asize = fwhm if kwargs["asize"] is None else kwargs["asize"]
-        delta_rot = kwargs["delta_rot"]
-        delta_sep = kwargs["delta_sep"]
-        nframes = kwargs["nframes"]
-    
+        delta_rot = (0.1, 1.0) if kwargs["delta_rot"] is None else kwargs["delta_rot"]
+        delta_sep = 1.0 if kwargs["delta_sep"] is None else kwargs["delta_sep"]
+        nframes = "auto" if kwargs["nframes"] is None else kwargs["nframes"]
 
     
     if sub_type == "ASDI":
         sub = median_sub(cubes, angles, scale_list=opt_scal,
                             flux_sc_list=opt_flux, radius_int=mask_rad,
-                            nproc=nproc)
-    elif sub_type == "ASDI_annular":
-        sub = median_sub(cubes, angles, scale_list=opt_scal,
-                          flux_sc_list=opt_flux, fwhm=fwhm, asize=asize,
-                          mode="annular", delta_rot=delta_rot,
-                          radius_int=mask_rad, nframe=nframes, imlib=imlib,
-                          collapse=collapse, interpolation=interpolation)
+                            nproc=nproc, full_output=full_output, **rot_options)
+    # elif sub_type == "ASDI_annular":
+    #     sub = median_sub(cubes, angles, scale_list=opt_scal,
+    #                       flux_sc_list=opt_flux, fwhm=fwhm, asize=asize,
+    #                       mode="annular", delta_rot=delta_rot, nproc=nproc,
+    #                       radius_int=mask_rad, nframe=nframes, imlib=imlib,
+    #                       collapse=collapse, interpolation=interpolation,
+    #                       full_output=full_output, **rot_options)
     elif sub_type == "ADI":
-        sub_adi = median_sub(cubes, angles, imlib=imlib, collapse=collapse,
-                             interpolation=interpolation)
+        dict_args = {"collapse": collapse, "imlib": imlib, "interpolation": interpolation, "nproc": nproc}
+        pool_args = list(zip(cubes, np.repeat([angles], nchnls, axis=0),
+                    np.repeat(dict_args, nchnls, axis=0)))
+        with mp.Pool(nproc) as pool:
+            sub_adi = np.array(pool.starmap(median_sub, pool_args))
         sub = redux_utils.combine(sub_adi)
     elif sub_type == "ADI_annular":
-        sub_adi_ann = median_sub(cubes, angles, fwhm=fwhm, asize=asize,
-                                 mode="annular", delta_rot=delta_rot,
-                                 radius_int=mask_rad, nframe=nframes,
-                                 imlib=imlib, collapse=collapse,
-                                 interpolation=interpolation)
+        dict_args = {"collapse": collapse, "fwhm": fwhm, "asize": asize, "mode": "annular",
+                     "delta_rot": delta_rot, "delta_sep": delta_sep, "radius_int": mask_rad,
+                     "nframes": nframes, "imlib": imlib, "interpolation": interpolation, "nproc": nproc,
+                     "full_output": full_output}
+        pool_args = list(zip(cubes, np.repeat([angles], nchnls, axis=0),
+                    np.repeat(dict_args, nchnls, axis=0)))
+        with mp.Pool(nproc) as pool:
+            sub_adi_ann = np.array(pool.starmap(median_sub, pool_args))
         sub = redux_utils.combine(sub_adi_ann, combine_fn=combine_fn)
     elif sub_type == "SDI":
         sub = median_sub(cubes, angles, scale_list=opt_scal, sdi_only=True,
-                             radius_int=mask_rad, rot_options=rot_options)
+                             radius_int=mask_rad, full_output=full_output,
+                             **rot_options)
     else:
         print("The following subtraction type '%s' is not implemented"%sub_type)
-        return (None, None)
+        return None
 
-    if out_path is not None:
-        redux_utils.to_fits(sub, out_path)
-
-    return sub, fwhm
+    return sub
 
 
 def PCA_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
-        out_path: str=None, mask_rad: float=10, do_opt: bool=False,
-        full_output: bool=False, sub_type: str="ASDI",
-        **kwargs) -> tuple[np.ndarray, np.ndarray]:
+        mask_rad: float=10, do_opt: bool=False, full_output: bool=False,
+        sub_type: str="single", **kwargs) -> np.ndarray:
 
 
-    fwhm, opt_scal, opt_flux = _prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
-
+    fwhm, _, opt_scal, _ = prep(cubes, wavelengths, mask_rad=mask_rad, do_opt=do_opt)
 
 
     # algo args
     ncomp = redux_utils.numcomps
     nproc = redux_utils.numworkers
-    scaling = "temp-standard"
-    an_dist = np.linspace(np.min(angles), np.max(angles), nbranch, endpoint=True)
-    algo_dict = {"ncomp": ncomp, "imlib": "vip-fft", "interpolation": "lanczos4"}
-    rot_options = {"interp_zeros": True, "mask_val": 0}
-
+    kwkeys = kwargs.keys()
+    scaling = "temp-standard" if "scaling" not in kwkeys else kwargs["scaling"]
+    rot_options = {"interp_zeros": True, "mask_val": 0} if "rot_options" not in kwkeys else kwargs["rot_options"]
     
-
-    # Annular ASDI kws
+    # Annular PCA kws
     if "annular" in sub_type:
-        mode = "annular"
-
-        kwkeys = kwargs.keys()
+        
         for kw in ["asize", "delta_rot", "delta_sep", "nframes"]:
             if kw not in kwkeys:
                 print("The necessary kwargs for an annuluar ADI subtraction" + \
                       "were not provided. Missing '%s' at least..."%kw)
-                return (None, None)
+                return None
             
         asize = fwhm if kwargs["asize"] is None else kwargs["asize"]
-        delta_rot = kwargs["delta_rot"]
-        delta_sep = kwargs["delta_sep"]
-        nframes = kwargs["nframes"]
-    
-    
+        delta_rot = (0.1, 1.0) if kwargs["delta_rot"] is None else kwargs["delta_rot"]
+        delta_sep = (0.1, 1.0) if kwargs["delta_sep"] is None else kwargs["delta_sep"]
+        n_segments = "auto" if kwargs["n_segments"] is None else kwargs["n_segments"]
 
-    if sub_type == "PCA_single":
+    
+    if sub_type == "single":
         # Full-frame PCA-ASDI
         # Single step
-        sub = pca(cubes, angles, scale_list=opt_scal, ncomp=ncomp,
+        pp_sng = pca(cubes, angles, scale_list=opt_scal, ncomp=ncomp,
                 adimsdi="single", crop_ifs=False, mask_center_px=mask_rad,
                 scaling=scaling, nproc=nproc, full_output=full_output,
                 **rot_options)
-    elif sub_type == "PCA_double":
+        pp_res = pp_sng
+    elif sub_type == "double":
         # Double step
-        sub = pca(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
+        pp_dbl = pca(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
                     adimsdi="double", crop_ifs=False, mask_center_px=mask_rad,
                     interpolation=interpolation, scaling=scaling, nproc=nproc,
                     full_output=full_output, **rot_options)
-    elif sub_type == "PCA_annular":
+        pp_res = pp_dbl
+    elif sub_type == "annular":
         # Annular PCA-ASDI
         # Double step
-        sub = pca_annular(cubes, angles, scale_list=opt_scal, ncomp=(ncomp, ncomp),
-                    radius_int=mask_rad, asize=asize, fwhm=fwhm, nproc=nproc, full_output=full_output, **rot_options)
+        pp_ann = pca_annular(cubes, angles, scale_list=opt_scal, nproc=nproc,
+                          ncomp=(ncomp, ncomp), asize=asize, fwhm=fwhm,
+                          delta_rot=delta_rot, delta_sep=delta_sep,
+                          n_segments=n_segments, radius_int=mask_rad,
+                          full_output=full_output, **rot_options)
+        if full_output:
+            pp_res = pp_ann[2, 0, 1]
+        else:
+            pp_res = pp_ann
     else:
         print("The following subtraction type '%s' is not implemented"%sub_type)
-        return (None, None)
+        return None
 
-    if out_path is not None:
-        redux_utils.to_fits(sub, out_path)
-
-    return sub, fwhm
+    return pp_res
 
 if __name__ == "__main__":
 
     # --- DATA INFO --- #
+    nframes = 2202
     firstchannelnum = 45
     lastchannelnum = 74
     channelnums = list(range(firstchannelnum, lastchannelnum + 1))
     nchnls = len(channelnums)
+    frames = range(0, nframes, redux_utils.everynthframe)
     # --- DATA INFO --- #
 
     # --- PATHS --- #
     data_path = "./data/005_center_multishift/wl_channel_%05i.fits"
     data_paths = [data_path%i for i in channelnums]
+
+    angles_path = "data/parang_bads_removed.txt"
+    wavelengths_path = "data/channel_wavelengths.txt"
 
     # outchannel_path = None
     # outchannel_paths = [outchannel_path] * nchnls
@@ -226,14 +231,9 @@ if __name__ == "__main__":
     # --- PATHS --- #
 
     # --- DATA --- #
-    cubes = redux_utils.loadall(data_paths, verbose=False)
-    cubes_skipped = cubes[:,::redux_utils.everynthframe]
-
-    angles = redux_utils.angles
-    angles_skipped = angles[::redux_utils.everynthframe]
-
-    wavelengths = redux_utils.wavelengths
-    wavelengths_selected = wavelengths[channelnums]
+    cubes, wavelengths, angles = redux_utils.init(data_paths, wavelengths_path, angles_path, channels=channelnums, frames=frames)
+    # --- DATA --- #
+    
 
     # ASDI_vip(cube_skipped, angles_skipped, combine_fn=np.mean, collapse_channel="median", out_path=outcombined_path, outchannel_paths=outchannel_paths)
-    ASDI_vip(cubes_skipped, wavelengths_selected, angles_skipped, out_path=outcombined_path, do_opt=False, sub_type="ASDI")
+    ASDI_vip(cubes, wavelengths, angles, out_path=outcombined_path, do_opt=False, sub_type="ASDI")

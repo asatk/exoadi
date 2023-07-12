@@ -10,9 +10,7 @@ from typing import Callable
 from redux_utils import to_fits, to_npy, numcomps, numworkers
 
 def ADI_npy(cube: np.ndarray, angles: np.ndarray,
-        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
-        save_fn: Callable[[np.ndarray, str, bool], None]=to_fits,
-        out_path: str=None) -> np.ndarray:
+        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean) -> np.ndarray:
 
     # subtract PSF model from all time frames in this single wavelength channel
     psf = np.median(cube, axis=0)
@@ -25,35 +23,25 @@ def ADI_npy(cube: np.ndarray, angles: np.ndarray,
 
     # combine de-rotated images in this wavelength channel
     adi = combine_fn(cube_rot, axis=0)
-    if out_path is not None:
-        save_fn(adi, out_path)
 
     return adi
 
 # combine each wavelength channel
 def combine_ADI_npy(cube: np.ndarray, angles: np.ndarray,
         combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
-        channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
-        save_fn: Callable[[np.ndarray, str, bool], None]=to_fits,
-        out_path: str=None, outchannel_paths: list[str]=None) -> np.ndarray:
+        channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean) -> np.ndarray:
 
     nchnls = cube.shape[0]
     assert cube.shape[1] == angles.shape[0]
-    if outchannel_paths is not None:
-        assert nchnls == len(outchannel_paths)
-    else:
-        outchannel_paths = list[None] * nchnls
 
     # calculate ADI image for each wavelength channel
     with mp.Pool(numworkers) as pool:
         channels = np.array(pool.starmap(
             ADI_npy,
-            zip(cube, angles, [channel_combine_fn] * nchnls, [save_fn] * nchnls, outchannel_paths)))
+            zip(cube, angles, [channel_combine_fn] * nchnls)))
 
     # combine ADI images across channels
     adi_combined = combine_fn(channels, axis=0)
-    if out_path is not None:
-        save_fn(adi_combined, out_path)
 
     return adi_combined
 
@@ -92,6 +80,7 @@ if __name__ == "__main__":
     outcombined_path = "./out/vipADI_%05i_%05i_median.fits"%(firstchannelnum, lastchannelnum)
     # --- PATHS --- #
 
-    combine_ADI_npy(channelnums, data_paths, combine_fn=np.mean,
-            channel_combine_fn=np.mean, save_fn=to_fits,
-            out_path=outcombined_path, outchannel_paths=outchannel_paths)
+    pp_cube = combine_ADI_npy(channelnums, data_paths, combine_fn=np.mean,
+            channel_combine_fn=np.mean)
+    
+    to_fits(pp_cube, outcombined_path)
