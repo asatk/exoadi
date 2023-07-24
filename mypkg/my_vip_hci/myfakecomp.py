@@ -4,12 +4,12 @@ Module with fake companion injection functions.
 Modified: 2023.07.24
 """
 
-__author__ = 'Carlos Alberto Gomez Gonzalez, Valentin Christiaens, Anthony Atkinson'
-__all__ = ['collapse_psf_cube',
-           'normalize_psf',
-           'cube_inject_companions',
-           'generate_cube_copies_with_injections',
-           'frame_inject_companion']
+__author__ = "Carlos Alberto Gomez Gonzalez, Valentin Christiaens, Anthony Atkinson"
+__all__ = ["collapse_psf_cube",
+           "normalize_psf",
+           "cube_inject_companions",
+           "generate_cube_copies_with_injections",
+           "frame_inject_companion"]
 
 import numpy as np
 from numpy import ndarray
