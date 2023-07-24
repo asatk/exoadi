@@ -9,7 +9,7 @@ numworkers = 8      # number of worker threads/processes
 numcomps = 3        # number of PCA components
 everynthframe = 20  # number of frames 'n' selected from data cube
 chunksize = 20
-pxscale = 0.027
+pxscale = 0.035
 
 def init(data_paths: list[str], wavelengths_path: str, angles_path: str, channels: list[int]=..., frames: list[int]=...) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     '''

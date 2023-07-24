@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 import multiprocessing as mp
 import numpy as np
 import os
+import pandas as pd
 from typing import Callable, Union
 
 from hciplot import plot_frames, plot_cubes
@@ -155,7 +156,7 @@ def detect_planet(pp_frame, pl_loc, fwhm, use_stim=False, plot=False, out_path: 
 def ccurves(cubes: np.ndarray, angles: np.ndarray, psfn: np.ndarray,
             fwhm: float, pl_loc: tuple[float], ncomp: np.ndarray,
             nbranch: int, simplex_data: tuple[np.ndarray],
-            algo: str="PCA", pf_path: str=None, name_kwargs: dict={},
+            algo: str="PCA", sub_type: str="single", pf_path: str=None, name_kwargs: dict={},
             algo_dict: dict={}):
 
     pxscale = redux_utils.pxscale
@@ -182,25 +183,28 @@ def ccurves(cubes: np.ndarray, angles: np.ndarray, psfn: np.ndarray,
 
 
     if algo == "PCA":
-        # res_thru = throughput(cubes_pf, angles, psfn, fwhm, algo=pca,
-        #                       ncomp=ncomp, nbranch=nbranch, **algo_dict)
-        # thru = res_thru[0]
-        # plt.plot(thru[0])
-        # plt.show()
-        cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale,
-                            starphot=pl_flux, algo=pca, sigma=5,
-                            nbranch=nbranch, ncomp=ncomp, debug=True,
-                            **algo_dict)
-    elif algo == "PCA_annular":
-        # res_thru = throughput(cubes_pf, angles, psfn, fwhm, algo=pca_annular,
-        #                       ncomp=ncomp, nbranch=nbranch, **algo_dict)
-        # thru = res_thru[0]
-        # plt.plot(thru[0])
-        # plt.show()
-        cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale,
-                            starphot=pl_flux, algo=pca_annular, sigma=5,
-                            nbranch=nbranch, ncomp=ncomp, radius_int=int(fwhm),
-                            debug=True, **algo_dict)
+
+        if sub_type == "annular":
+            # res_thru = throughput(cubes_pf, angles, psfn, fwhm, algo=pca_annular,
+            #                       ncomp=ncomp, nbranch=nbranch, **algo_dict)
+            # thru = res_thru[0]
+            # plt.plot(thru[0])
+            # plt.show()
+            cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale,
+                                starphot=pl_flux, algo=pca_annular, sigma=5,
+                                nbranch=nbranch, debug=True, **algo_dict)
+        else:
+            # res_thru = throughput(cubes_pf, angles, psfn, fwhm, algo=pca,
+            #                       ncomp=ncomp, nbranch=nbranch, **algo_dict)
+            # thru = res_thru[0]
+            # plt.plot(thru[0])
+            # plt.show()
+            cc = contrast_curve(cubes_pf, angles, psfn, fwhm, pxscale,
+                                starphot=pl_flux, algo=pca, sigma=5,
+                                nbranch=nbranch, debug=True,
+                                **algo_dict)
+    else:
+        cc = None
 
     return cc
 
@@ -225,7 +229,7 @@ if __name__ == "__main__":
     load_cubes = True
     do_prep = True
     do_snr = False
-    full_output = False
+    full_output = True
     mask_rad = 10
     simplex_data = ([21.403], [154.730], [45.632])
     pl_loc = (11.65, 40.14)
@@ -280,14 +284,39 @@ if __name__ == "__main__":
     Planet 0: simplex result: (r, theta, f)=(21.403, 154.730, 45.632) at 
           (X,Y)=(11.65, 40.14)
     '''
+    # algo_dict = {"imlib": "vip-fft", "interpolation": "lanczos4",
+    #              "scale_list": opt_scal, "adimsdi": "single",
+    #              "crop_ifs": False, "mask_center_px": mask_rad,
+    #              "scaling": scaling, "nproc": nproc, "ncomp": ncomp,
+    #              "full_output": full_output}
+    
     algo_dict = {"imlib": "vip-fft", "interpolation": "lanczos4",
-                 "scale_list": opt_scal, "adimsdi": "single",
-                 "crop_ifs": False, "mask_center_px": mask_rad,
-                 "scaling": scaling, "nproc": nproc,
-                 "full_output": full_output}
+                "scale_list": opt_scal, "ncomp": (ncomp, ncomp),
+                "adimsdi":"double", "crop_ifs": False,
+                "mask_center_px": mask_rad, "scaling": scaling, "nproc": nproc,
+                "full_output": full_output}
+    
+    # algo_dict = {"imlib": "vip-fft", "interpolation": "lanczos4",
+    #             "scale_list": opt_scal, "ncomp": (ncomp, ncomp),
+    #             "asize": fwhm, "n_segments": "auto",
+    #             "radius_int": mask_rad, "nproc": nproc,
+    #             "full_output": full_output}
 
-    ccurves(cubes, angles, psfn, fwhm, pl_loc, ncomp, nbranch, simplex_data,
-            algo=algo, pf_path=pf_path, name_kwargs=name_kwargs,
+    datafr, frame_fc_all, frame_no_fc, fc_map_all = ccurves(cubes, angles, psfn, fwhm, pl_loc, ncomp, nbranch,
+            simplex_data, algo=algo, sub_type=sub_type, pf_path=pf_path, name_kwargs=name_kwargs,
             algo_dict=algo_dict)
+
+
+    out_path0 = "out/datafr_%s.csv"%name
+    out_path1 = "out/fc_all_%s.fits"%name
+    out_path2 = "out/no_fc_%s.fits"%name
+    out_path3 = "out/fc_map_all_%s.fits"%name
+
+    datafr.to_csv(out_path0)
+    redux_utils.to_fits(frame_fc_all, out_path1)
+    redux_utils.to_fits(frame_no_fc, out_path2)
+    redux_utils.to_fits(fc_map_all, out_path3)
+
+
 
 

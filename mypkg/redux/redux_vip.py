@@ -81,12 +81,12 @@ def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
 
     # algo args
     nproc = redux_utils.numworkers
-    imlib = "vip-fft"
-    interpolation ="lanczos4"
-    rot_options = {"interp_zeros": True, "mask_val": 0}
-    combine_fn = np.median
+    rot_options = {"imlib": "vip-fft", "interpolation": "lanczos4",
+                   "interp_zeros": True, "mask_val": 0}
     nchnls = len(wavelengths)
+    combine_fn = np.median
 
+    # >>>> Pretty sure I can remove this below if just adding **kwargs to end of each dict works fine
 
     # Annular ASDI kws
     if "annular" in sub_type:
@@ -104,41 +104,56 @@ def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
         nframes = "auto" if kwargs["nframes"] is None else kwargs["nframes"]
 
     
+    args_asdi = {"cube": cubes, "angle_list": angles, "scale_list": opt_scal,
+                "flux_sc_list": opt_flux, "crop_ifs": False,
+                "radius_int": mask_rad, "nproc": nproc,
+                "full_output": full_output, **rot_options, **kwargs}
+
+    args_asdi_ann = {"cube": cubes, "angle_list": angles,
+                     "scale_list": opt_scal, "flux_sc_list": opt_flux,
+                     "asize": asize, "fwhm": fwhm, "mode": "annular",
+                     "crop_ifs": False, "delta_rot": delta_rot,
+                     "delta_sep": delta_sep, "nframes": nframes,
+                     "collapse": collapse, "radius_int": mask_rad,
+                     "nproc": nproc, "full_output": full_output, **rot_options,
+                     **kwargs}
+    
+    args_adi = {"angle_list": angles, "collapse": collapse, "nproc": nproc,
+                "full_output": full_output, **rot_options, **kwargs}
+    
+    args_adi_ann = {"angle_list": angles, "collapse": collapse, "asize": asize,
+                    "fwhm": fwhm, "mode": "annular", "delta_rot": delta_rot,
+                    "delta_sep": delta_sep, "radius_int": mask_rad,
+                    "nframes": nframes, "nproc": nproc,
+                    "full_output": full_output, **rot_options, **kwargs}
+    
+    args_sdi = {"cube": cubes, "angle_list": angles, "scale_list": opt_scal,
+                 "sdi_only": True, "radius_int": mask_rad,
+                 "full_output": full_output, **rot_options, **kwargs}
+
     if sub_type == "ASDI":
-        sub = median_sub(cubes, angles, scale_list=opt_scal,
-                            flux_sc_list=opt_flux, radius_int=mask_rad,
-                            nproc=nproc, full_output=full_output, **rot_options)
-    # elif sub_type == "ASDI_annular":
-    #     sub = median_sub(cubes, angles, scale_list=opt_scal,
-    #                       flux_sc_list=opt_flux, fwhm=fwhm, asize=asize,
-    #                       mode="annular", delta_rot=delta_rot, nproc=nproc,
-    #                       radius_int=mask_rad, nframe=nframes, imlib=imlib,
-    #                       collapse=collapse, interpolation=interpolation,
-    #                       full_output=full_output, **rot_options)
+        sub = median_sub(**args_asdi)
+    elif sub_type == "ASDI_annular":
+        sub = median_sub(**args_asdi_ann)
     elif sub_type == "ADI":
-        dict_args = {"collapse": collapse, "imlib": imlib, "interpolation": interpolation, "nproc": nproc}
-        pool_args = list(zip(cubes, np.repeat([angles], nchnls, axis=0),
-                    np.repeat(dict_args, nchnls, axis=0)))
+        pool_args = [{"cube": cube_i, **args_adi} for cube_i in cubes]
         with mp.Pool(nproc) as pool:
             sub_adi = np.array(pool.starmap(median_sub, pool_args))
         sub = redux_utils.combine(sub_adi)
     elif sub_type == "ADI_annular":
-        dict_args = {"collapse": collapse, "fwhm": fwhm, "asize": asize, "mode": "annular",
-                     "delta_rot": delta_rot, "delta_sep": delta_sep, "radius_int": mask_rad,
-                     "nframes": nframes, "imlib": imlib, "interpolation": interpolation, "nproc": nproc,
-                     "full_output": full_output}
-        pool_args = list(zip(cubes, np.repeat([angles], nchnls, axis=0),
-                    np.repeat(dict_args, nchnls, axis=0)))
+        pool_args = [{"cube": cube_i, **args_adi_ann} for cube_i in cubes]
         with mp.Pool(nproc) as pool:
             sub_adi_ann = np.array(pool.starmap(median_sub, pool_args))
         sub = redux_utils.combine(sub_adi_ann, combine_fn=combine_fn)
     elif sub_type == "SDI":
-        sub = median_sub(cubes, angles, scale_list=opt_scal, sdi_only=True,
-                             radius_int=mask_rad, full_output=full_output,
-                             **rot_options)
+        sub = median_sub(**args_sdi)
     else:
         print("The following subtraction type '%s' is not implemented"%sub_type)
         return None
+    
+    # can feed arguments in main fn/script and siphon the returns immediately.
+    # could make wrapper fns for each call, but it is ultiamtely just making
+    # and passing the dict of args that I care about the most.
 
     return sub
 
