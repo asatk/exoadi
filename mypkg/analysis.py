@@ -15,8 +15,9 @@ from vip_hci.metrics import completeness_curve, contrast_curve, detection, \
 from vip_hci.fm import cube_planet_free, firstguess
 from vip_hci.psfsub import pca, pca_annular
 
-import redux_utils
-from redux_vip import prep
+
+from mypkg.redux import redux_utils
+from mypkg.redux.redux_vip import prep
 
 def plot_redux(name, zscale=True, save=True):
 

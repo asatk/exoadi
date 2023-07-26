@@ -7,7 +7,7 @@ from vip_hci.psfsub import median_sub, pca, pca_annular
 from vip_hci.preproc import find_scal_vector, frame_rescaling
 from vip_hci.var import mask_circle
 
-import redux_utils
+from . import redux_utils
 
 imlib = "vip-fft"
 interpolation = "lanczos4"

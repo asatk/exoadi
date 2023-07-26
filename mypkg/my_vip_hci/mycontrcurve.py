@@ -238,6 +238,8 @@ def throughput(cube, angle_list, psf_template, fwhm, algo, nbranch=1, theta=0,
             if "scale_list" not in algo_dict:
                 raise ValueError("Vector of wavelength not found")
             else:
+                # i think this only matters if diff psf templates are computed
+                # one can simply provide the psf temps beforehand.
                 if algo_dict["scale_list"].shape[0] != array.shape[0]:
                     raise TypeError("Input wavelength vector has wrong length")
                 if isinstance(fwhm, float) or isinstance(fwhm, int):
@@ -500,9 +502,8 @@ def _find_coords(rad, sep, init_angle, fin_angle):
     npoints = (np.deg2rad(angular_range) * rad) / sep  # (2*np.pi*rad)/sep
     ang_step = angular_range / npoints  # 360/npoints
     trig_arg = np.deg2rad(np.arange(int(npoints)) * ang_step + init_angle)
-    x = rad * np.cos(trig_arg)
-    y = rad * np.sin(trig_arg)
-    return y, x
+    yx = rad * np.array([np.sin(trig_arg), np.cos(trig_arg)])
+    return yx
 
 
 def noise_per_annulus(array, separation, fwhm, init_rad=None, wedge=(0, 360),

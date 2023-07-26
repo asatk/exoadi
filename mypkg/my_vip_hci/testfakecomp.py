@@ -1,153 +1,44 @@
+#! /usr/bin/env python
+
 """
 Module with fake companion injection functions.
-
-Modified: 2023.07.24
 """
 
-__author__ = "Carlos Alberto Gomez Gonzalez, Valentin Christiaens, Anthony Atkinson"
-__all__ = ["collapse_psf_cube",
-           "normalize_psf",
-           "cube_inject_companions",
-           "generate_cube_copies_with_injections",
-           "frame_inject_companion"]
+__author__ = 'Carlos Alberto Gomez Gonzalez, Valentin Christiaens'
+__all__ = ['collapse_psf_cube',
+           'normalize_psf',
+           'cube_inject_companions',
+           'generate_cube_copies_with_injections',
+           'frame_inject_companion']
 
+from multiprocessing import cpu_count
 import numpy as np
-from numpy import ndarray
-from photutils.aperture import aperture_photometry, CircularAperture
-from photutils.centroids import centroid_com as cen_com
 from scipy import stats
-from typing import Callable
-from vip_hci.config.utils_conf import print_precision, check_array, pool_map, \
-    iterable
-from vip_hci.preproc import cube_crop_frames, cube_shift, frame_crop, \
-    frame_shift
-from vip_hci.var import frame_center, fit_2dairydisk, fit_2dgaussian, \
-    fit_2dmoffat, get_annulus_segments, get_circle
+from scipy.interpolate import interp1d
+from packaging import version
+import photutils
+try:
+    from photutils.aperture import aperture_photometry, CircularAperture
+except:
+    from photutils import aperture_photometry, CircularAperture
+if version.parse(photutils.__version__) >= version.parse('0.3'):
+    # for photutils version >= '0.3' use photutils.centroids.centroid_com
+    from photutils.centroids import centroid_com as cen_com
+else:
+    # for photutils version < '0.3' use photutils.centroid_com
+    import photutils.centroid_com as cen_com
+from vip_hci.preproc import (cube_crop_frames, frame_shift, frame_crop, cube_shift,
+                       frame_rotate)
+from vip_hci.var import (frame_center, fit_2dgaussian, fit_2dairydisk, fit_2dmoffat,
+                   get_circle, get_annulus_segments, dist_matrix)
+from vip_hci.config.utils_conf import print_precision, check_array, pool_map, iterable
 
-def _cube_inject_adi(array: ndarray, psf_template: ndarray, angle_list: ndarray,
-                     flevel: ndarray, plsc: float, rad_dists: ndarray,
-                     n_branches: int=1, theta: float=0, imlib: str='vip-fft',
-                     interpolation: str='lanczos4', verbose: bool=False,
-                     nproc: int=1):
-    
-    if np.isscalar(flevel):
-        flevel = np.ones_like(angle_list)*flevel
-
-    # ceny, cenx = frame_center(array[0])
-    cenyx = np.array(frame_center(array[0]))
-    sizex = array.shape[-1]
-    sizey = array.shape[-2]
-    nframes = array.shape[-3]
-    n_rad = len(rad_dists)
-    
-    size_fc = psf_template.shape[-1]
-
-    w = int(np.ceil(size_fc/2)) #fake companion width?
-    if size_fc % 2:  # new convention
-        w -= 1
-    
-    start_px = cenyx.astype(int) - w
-    # sty = int(ceny) - w
-    # stx = int(cenx) - w
-
-    positions = []
-    # fake companion cube
-    if psf_template.ndim == 2:
-        fc_fr = np.repeat(psf_template, nframes)
-    else:
-        fc_fr = psf_template[:nframes]
-
-    array_out = array.copy()
-
-
-    angs = (np.arange(n_branches) * 2 * np.pi / n_branches) + np.deg2rad(theta)
-    # test these
-    temp = np.outer([np.sin(angs), np.cos(angs)], rad_dists).flatten()
-    positions = np.stack((temp[n_branches * n_rad:], temp[:n_branches * n_rad]), axis=1) + cenyx
-    # posns_y = cenyx[0] + np.outer(rad_dists, np.sin(angs)).reshape(-1)
-    # posns_x = cenyx[1] + np.outer(rad_dists, np.cos(angs)).reshape(-1)
-    # positions = np.stack((posns_y, posns_x), axis=1)
-
-
-    angs_arg = (angs - np.repeat([np.deg2rad(angle_list)], n_branches, axis=0).T).T
-    # shifts_y = np.outer(rad_dists, np.sin(angs_arg))
-    # shifts_x = np.outer(rad_dists, np.cos(angs_arg))
-
-    # shifts_yx = rad * np.array([np.sin(ang_arg), np.cos(ang_arg)])
-    temp = np.outer([np.sin(angs_arg), np.cos(angs_arg)], rad_dists).flatten()
-    shifts_yx = np.stack((temp[n_branches * nframes:], temp[:n_branches * nframes]), axis=1)
-
-    # integer shift (in final cube)
-    yx0 = start_px + shifts_yx.astype(int)
-    yxN = yx0 + size_fc
-    p_yx0 = np.zeros_like(yx0)
-    p_yxN = p_yx0 + size_fc
-    
-    idx0 = p_yx0 < 0
-    p_yx0[:, 0][idx0[:, 0]] = -yx0[:, 0][idx0[:, 0]]
-    yx0[:, 0][idx0[:, 0]] = 0
-
-    p_yx0[:, 1][idx0[:, 1]] = -yx0[:, 1][idx0[:, 1]]
-    yx0[:, 1][idx0[:, 1]] = 0
-
-    size_arr = np.array([sizey, sizex])
-    idxN = p_yxN > size_arr
-    p_yxN[:, 0][idxN[:, 0]] -= yxN[:, 0][idxN[:, 0]] - size_arr[0]
-    yxN[:, 0][idxN[:, 0]] = size_arr[0]
-
-    p_yxN[:, 1][idxN[:, 1]] -= yxN[:, 1][idxN[:, 1]] - size_arr[1]
-    yxN[:, 1][idxN[:, 1]] = size_arr[1]
-
-
-    # sub-px shift (within PSF template frame)
-    dsyx = shifts_yx - shifts_yx.astype(int)
-
-    for branch in range(n_branches):
-        # ang = angs[branch]
-
-        if verbose:
-            print('Branch {}:'.format(branch+1))
-
-        for i, rad in enumerate(rad_dists):
-            array_sh = np.zeros(shape=(nframes, *array.shape))
-
-            fc_fr_rad = fc_fr.copy()
-            # this can be MP'd
-            if nproc > 1:
-                pool_res = pool_map(nproc, frame_shift, iterable(fc_fr_rad,...))
-            for fr in range(nframes):
-                yx_idx = branch * nframes + fr
-                yx0_fr = yx0[yx_idx]
-                yxN_fr = yxN[yx_idx]
-                p_yx0_fr = p_yx0[yx_idx]
-                p_yxN_fr = p_yxN[yx_idx]
-                dsyx_fr = dsyx[yx_idx]
-
-                if nproc == 1:
-                    fc_fr_rad = frame_shift(fc_fr_rad[fr], dsyx_fr[0], dsyx_fr[1],
-                        imlib, interpolation, border_mode='constant')
-                else:
-                    fc_fr_rad = pool_res[fr]
-                
-                array_sh[fr, yx0_fr[0]:yxN_fr[0], yx0_fr[1]:yxN_fr[1]] = \
-                    flevel[fr]*fc_fr_rad[p_yx0_fr[0]:p_yxN_fr[0], p_yx0_fr[1]:p_yxN_fr[1]]
-
-            array_out += array_sh
-
-            pos_y = positions[branch * len(rad_dists) + i, 0]
-            pos_x = positions[branch * len(rad_dists) + i, 1]
-
-            if verbose:
-                rad_arcs = rad * plsc
-                print("\t(X,Y)=({:.2f}, {:.2f}) at {:.2f} arcsec "
-                        "({:.2f} pxs from center)".format(
-                            pos_x, pos_y, rad_arcs, rad))
-
-    return array_out, positions
 
 def cube_inject_companions(array, psf_template, angle_list, flevel, rad_dists,
-        plsc=None, n_branches=1, theta=0, imlib='vip-fft',
-        interpolation='lanczos4', full_output=False, verbose=False, nproc: int=1):
+                           plsc=None, n_branches=1, theta=0, imlib='vip-fft',
+                           interpolation='lanczos4', transmission=None,
+                           radial_gradient=False, full_output=False,
+                           verbose=False, nproc=1):
     """ Injects fake companions in branches, at given radial distances.
 
     Parameters
@@ -190,12 +81,24 @@ def cube_inject_companions(array, psf_template, angle_list, flevel, rad_dists,
         See the documentation of the ``vip_hci.preproc.frame_shift`` function.
     interpolation : str, optional
         See the documentation of the ``vip_hci.preproc.frame_shift`` function.
+    transmission: numpy array, optional
+        Radial transmission of the coronagraph, if any. Array with either
+        2 x n_rad, 1+n_ch x n_rad columns. The first column should contain the
+        radial separation in pixels, while the other column(s) are the
+        corresponding off-axis transmission (between 0 and 1), for either all,
+        or each spectral channel (only relevant for a 4D input cube).
+    radial_gradient: bool, optional
+        Whether to apply a radial gradient to the psf image at the moment of
+        injection. By default False, i.e. the flux of the psf image is scaled
+        only considering the value of tramnsmission at the exact radius the
+        companion is injected. Setting it to False may better represent the
+        transmission at the very edge of a physical mask though.
     full_output : bool, optional
         Returns the ``x`` and ``y`` coordinates of the injections, additionally
         to the new array.
     verbose : bool, optional
         If True prints out additional information.
-    nproc: int, optional
+    nproc: int or None, optional
         Number of CPUs to use for multiprocessing. If None, will be 
         automatically set to half the number of available CPUs.
 
@@ -211,62 +114,276 @@ def cube_inject_companions(array, psf_template, angle_list, flevel, rad_dists,
         by transmission (serves to check radial transmission)
 
     """
+    if nproc is None:
+        nproc = cpu_count()//2
+
+    def _cube_inject_adi(array, psf_template, angle_list, flevel, plsc,
+                         rad_dists, n_branches=1, theta=0, imlib='vip-fft',
+                         interpolation='lanczos4', transmission=None,
+                         radial_gradient=False, verbose=False):
+        if np.isscalar(flevel):
+            flevel = np.ones_like(angle_list)*flevel
+
+        if transmission is not None:
+            # last radial separation should be beyond the edge of frame
+            interp_trans = interp1d(transmission[0], transmission[1])
+
+        ceny, cenx = frame_center(array[0])
+        nframes = array.shape[-3]
+        size_fc = psf_template.shape[-1]
+
+        positions = []
+        # fake companion cube
+        fc_fr = np.zeros([nframes, size_fc, size_fc])
+        if psf_template.ndim == 2:
+            for fr in range(nframes):
+                fc_fr[fr] = psf_template
+        else:
+            for fr in range(nframes):
+                fc_fr[fr] = psf_template[fr]
+
+        psf_trans = None
+        array_out = array.copy()
+
+        for branch in range(n_branches):
+            ang = (branch * 2 * np.pi / n_branches) + np.deg2rad(theta)
+
+            if verbose:
+                print('Branch {}:'.format(branch+1))
+
+            for rad in rad_dists:
+                fc_fr_rad = fc_fr.copy()
+                if transmission is not None:
+                    if radial_gradient:
+                        y_star = pceny
+                        x_star = pcenx - rad
+                        d = dist_matrix(size_fc, x_star, y_star)
+                        for i in range(d.shape[0]):
+                            fc_fr_rad[:, i] = interp_trans(d[i])*fc_fr[:, i]
+
+                        # check the effect of transmission on a single PSF tmp
+                        psf_trans = frame_rotate(fc_fr_rad[0],
+                                                 -(ang*180/np.pi-angle_list[0]),
+                                                 imlib=imlib_rot,
+                                                 interpolation=interpolation)
+
+                        # shift_y = rad * np.sin(ang - np.deg2rad(angle_list[0]))
+                        # shift_x = rad * np.cos(ang - np.deg2rad(angle_list[0]))
+                        # dsy = shift_y-int(shift_y)
+                        # dsx = shift_x-int(shift_x)
+                        # fc_fr_ang = frame_shift(psf_trans, dsy, dsx, imlib_sh,
+                        #                         interpolation,
+                        #                         border_mode='constant')
+                    else:
+                        fc_fr_rad = interp_trans(rad)*fc_fr
+                if nproc == 1:
+                    for fr in range(nframes):
+                        array_out[fr] += _frame_shift_fcp(fc_fr_rad[fr],
+                                                          array[fr], rad, ang,
+                                                          angle_list[fr],
+                                                          flevel[fr], size_fc,
+                                                          imlib_sh, imlib_rot,
+                                                          interpolation,
+                                                          transmission,
+                                                          radial_gradient)
+                else:
+                    res = pool_map(nproc, _frame_shift_fcp, iterable(fc_fr_rad),
+                                   iterable(array), rad, ang,
+                                   iterable(angle_list), iterable(flevel),
+                                   size_fc, imlib_sh, imlib_rot, interpolation,
+                                   transmission, radial_gradient)
+                    array_out += np.array(res)
+
+                pos_y = rad * np.sin(ang) + ceny
+                pos_x = rad * np.cos(ang) + cenx
+
+                positions.append((pos_y, pos_x))
+
+                if verbose:
+                    rad_arcs = rad * plsc
+                    print('\t(X,Y)=({:.2f}, {:.2f}) at {:.2f} arcsec '
+                          '({:.2f} pxs from center)'.format(pos_x, pos_y,
+                                                            rad_arcs, rad))
+
+        return array_out, positions, psf_trans
 
     check_array(array, dim=(3, 4), msg="array")
     check_array(psf_template, dim=(2, 3), msg="psf_template")
 
     nframes = array.shape[-3]
 
+    pceny, pcenx = frame_center(psf_template)
+
     if array.ndim == 4 and psf_template.ndim != 3:
         raise ValueError('`psf_template` must be a 3d array')
 
     if verbose and not np.isscalar(plsc):
         raise TypeError("`plsc` must be a scalar")
-    if not np.isscalar(flevel) and len(flevel) != array.shape[0]:
+    if not np.isscalar(flevel):
+        if len(flevel) != array.shape[0]:
             msg = "if not scalar `flevel` must have same length as array"
             raise TypeError(msg)
 
+    # set imlib for rotation & shift (rotation used if transmission!=None)
+    if imlib == 'opencv':
+        imlib_sh = imlib
+        imlib_rot = imlib
+    elif imlib == 'skimage' or imlib == 'ndimage-interp':
+        imlib_sh = 'ndimage-interp'
+        imlib_rot = 'skimage'
+    elif imlib == 'vip-fft' or imlib == 'ndimage-fourier':
+        imlib_sh = imlib
+        imlib_rot = 'vip-fft'
+    else:
+        raise TypeError("Interpolation not recognized.")
+
     rad_dists = np.asarray(rad_dists).reshape(-1)  # forces ndim=1
 
-    if rad_dists[-1] >= array.shape[-1] / 2:
+    if not rad_dists[-1] < array.shape[-1] / 2:
         raise ValueError('rad_dists last location is at the border (or '
                          'outside) of the field')
+
+    if transmission is not None:
+        t_nz = transmission.shape[0]
+        if transmission.ndim != 2:
+            raise ValueError("transmission should be a 2D ndarray")
+        elif t_nz != 2 and t_nz != 1+array.shape[0]:
+            msg = "transmission dimensions should be either (2,N) or (n_wave+1, N)"
+            raise ValueError(msg)
+        # if transmission doesn't have right format for interpolation, adapt it
+        diag = np.sqrt(2)*array.shape[-1]
+        if transmission[0, 0] != 0 or transmission[0, -1] < diag:
+            trans_rad_list = transmission[0].tolist()
+            for j in range(t_nz-1):
+                trans_list = transmission[j+1].tolist()
+                # should have a zero point
+                if transmission[0, 0] != 0:
+                    if j == 0:
+                        trans_rad_list = [0]+trans_rad_list
+                    trans_list = [0]+trans_list
+                # last point should be max possible distance between fc and star
+                if transmission[0, -1] < np.sqrt(2)*array.shape[-1]/2:
+                    if j == 0:
+                        trans_rad_list = trans_rad_list+[diag]
+                    trans_list = trans_list+[1]
+                if j == 0:
+                    ntransmission = np.zeros([t_nz, len(trans_rad_list)])
+                    ntransmission[0] = trans_rad_list
+                ntransmission[j+1] = trans_list
+            transmission = ntransmission.copy()
 
     # ADI case
     if array.ndim == 3:
         res = _cube_inject_adi(array, psf_template, angle_list, flevel, plsc,
                                rad_dists, n_branches, theta, imlib,
-                               interpolation, verbose, nproc=nproc)
-        array_out, positions = res
+                               interpolation, transmission, radial_gradient,
+                               verbose)
+        array_out, positions, psf_trans = res
 
     # ADI+mSDI (IFS) case
     else:
         nframes_wav = array.shape[0]
-        array_out = np.empty_like(array)
+        array_out = array.copy()
         if np.isscalar(flevel):
-            flevel_all = flevel * np.ones([nframes_wav, nframes])
+            flevel_all = np.ones([nframes_wav, nframes])*flevel
         elif flevel.ndim == 1:
-            flevel_all = np.repeat(flevel, nframes_wav)
+            flevel_all = np.zeros([nframes_wav, nframes])
+            for i in range(nframes_wav):
+                flevel_all[i, :] = flevel[i]
         else:
             flevel_all = flevel
         for i in range(nframes_wav):
             if verbose:
                 msg = "*** Processing spectral channel {}/{} ***"
                 print(msg.format(i+1, nframes_wav))
+            if transmission is None:
+                trans = None
+            elif transmission.shape[0] == 2:
+                trans = transmission
+            elif transmission.shape[0] == nframes_wav+1:
+                trans = np.array([transmission[0], transmission[i+1]])
+            else:
+                msg = "transmission shape ({}, {}) is not valid"
+                raise TypeError(msg.format(transmission.shape[0],
+                                           transmission.shape[1]))
             res = _cube_inject_adi(array[i], psf_template[i], angle_list,
                                    flevel_all[i], plsc, rad_dists, n_branches,
-                                   theta, imlib, interpolation,
-                                   verbose=(i == 0 & verbose is True), nproc=nproc)
-            array_out[i], positions = res
+                                   theta, imlib, interpolation, trans,
+                                   radial_gradient,
+                                   verbose=(i == 0 & verbose is True))
+            array_out[i], positions, psf_trans = res
 
     if full_output:
-        return array_out, positions
+        if transmission is not None:
+            return array_out, positions, psf_trans
+        else:
+            return array_out, positions
     else:
         return array_out
 
 
+def _frame_shift_fcp(fc_fr_rad, array, rad, ang, derot_ang, flevel, size_fc,
+                     imlib_sh, imlib_rot, interpolation, transmission,
+                     radial_gradient):
+    """
+    Specific cube shift algorithm for injection of fake companions
+    """
+
+    ceny, cenx = frame_center(array)
+    sizey = array.shape[-2]
+    sizex = array.shape[-1]
+
+    array_sh = np.zeros_like(array)
+
+    w = int(np.ceil(size_fc/2))
+    if size_fc % 2:  # new convention
+        w -= 1
+    sty = int(ceny) - w
+    stx = int(cenx) - w
+
+    shift_y = rad * np.sin(ang - np.deg2rad(derot_ang))
+    shift_x = rad * np.cos(ang - np.deg2rad(derot_ang))
+    if transmission is not None and radial_gradient:
+        fc_fr_ang = frame_rotate(fc_fr_rad, -(ang*180/np.pi - derot_ang),
+                                 imlib=imlib_rot, interpolation=interpolation)
+    else:
+        fc_fr_ang = fc_fr_rad.copy()
+
+    # sub-px shift (within PSF template frame)
+    dsy = shift_y-int(shift_y)
+    dsx = shift_x-int(shift_x)
+    fc_fr_ang = frame_shift(fc_fr_ang, dsy, dsx, imlib_sh, interpolation,
+                            border_mode='constant')
+    # integer shift (in final cube)
+    y0 = sty+int(shift_y)
+    x0 = stx+int(shift_x)
+    yN = y0+size_fc
+    xN = x0+size_fc
+    p_y0 = 0
+    p_x0 = 0
+    p_yN = size_fc
+    p_xN = size_fc
+    if y0 < 0:
+        p_y0 = -y0
+        y0 = 0
+    if x0 < 0:
+        p_x0 = -x0
+        x0 = 0
+    if yN > sizey:
+        p_yN -= yN-sizey
+        yN = sizey
+    if xN > sizex:
+        p_xN -= xN-sizex
+        xN = sizex
+
+    array_sh[y0:yN, x0:xN] = flevel*fc_fr_ang[p_y0:p_yN, p_x0:p_xN]
+
+    return array_sh
+
+
 def generate_cube_copies_with_injections(array, psf_template, angle_list, plsc,
-        n_copies=100, inrad=8, outrad=12, dist_flux=("uniform", 2, 500)):
+                                         n_copies=100, inrad=8, outrad=12,
+                                         dist_flux=("uniform", 2, 500)):
     """
     Create multiple copies of ``array`` with different random injections.
 
@@ -347,13 +464,18 @@ def generate_cube_copies_with_injections(array, psf_template, angle_list, plsc,
         dist = np.sqrt(injx**2 + injy**2)
         theta = np.mod(np.arctan2(injy, injx) / np.pi * 180, 360)
 
-        # TODO: multiple injections?
-        fake_cube, positions = cube_inject_companions(array, psf_template,
-            angle_list, plsc=plsc, flevel=fluxes[n], theta=theta,
-            rad_dists=dist, n_branches=1, full_output=True, verbose=False)
+        fake_cube, positions = cube_inject_companions(
+            array, psf_template, angle_list, plsc=plsc,
+            flevel=fluxes[n], theta=theta,
+            rad_dists=dist, n_branches=1,  # TODO: multiple injections?
+            full_output=True, verbose=False
+        )
 
-        yield dict(positions=positions, dist=dist, theta=theta, flux=fluxes[n],
-            cube=fake_cube)
+        yield dict(
+            positions=positions,
+            dist=dist, theta=theta, flux=fluxes[n],
+            cube=fake_cube
+        )
 
 
 def frame_inject_companion(array, array_fc, pos_y, pos_x, flux,
@@ -459,57 +581,6 @@ def collapse_psf_cube(array, size, fwhm=4, verbose=True, collapse='mean'):
     return psf_normd
 
 
-def _psf_norm_2d(psf, fwhm, threshold, mask_core, full_output, verbose,
-        fit_2d: Callable, imlib="vip-fft", interpolation="lanczos4"):
-    # lacking interp, imlib, fit2d
-    """ 2d case """
-    # we check if the psf is centered and fix it if needed
-    cy, cx = frame_center(psf, verbose=False)
-    xcom, ycom = cen_com(psf)
-    if not (np.allclose(cy, ycom, atol=1e-2) or
-            np.allclose(cx, xcom, atol=1e-2)):
-        # first we find the centroid and put it in the center of the array
-        centry, centrx = fit_2d(psf, full_output=False, debug=False)
-        if not np.isnan(centry) and not np.isnan(centrx):
-            shiftx, shifty = centrx - cx, centry - cy
-            psf = frame_shift(psf, -shifty, -shiftx, imlib=imlib,
-                                interpolation=interpolation)
-
-            for _ in range(2):
-                centry, centrx = fit_2d(psf, full_output=False, debug=False)
-                if np.isnan(centry) or np.isnan(centrx):
-                    break
-                cy, cx = frame_center(psf, verbose=False)
-                shiftx, shifty = centrx - cx, centry - cy
-                psf = frame_shift(psf, -shifty, -shiftx, imlib=imlib,
-                                    interpolation=interpolation)
-
-    # we check whether the flux is normalized and fix it if needed
-    fwhm_aper = CircularAperture((cx, cy), fwhm/2)
-    fwhm_aper_phot = aperture_photometry(psf, fwhm_aper,
-                                            method='exact')
-    fwhm_flux = np.array(fwhm_aper_phot['aperture_sum'])
-
-    if fwhm_flux > 1.1 or fwhm_flux < 0.9:
-        psf_norm_array = psf / np.array(fwhm_aper_phot['aperture_sum'])
-    else:
-        psf_norm_array = psf
-
-    if threshold is not None:
-        psf_norm_array[np.where(psf_norm_array < threshold)] = 0
-
-    if mask_core is not None:
-        psf_norm_array = get_circle(psf_norm_array, radius=mask_core)
-
-    if verbose:
-        print("Flux in 1xFWHM aperture: {:.3f}".format(fwhm_flux[0]))
-
-    if full_output:
-        return psf_norm_array, fwhm_flux, fwhm
-    else:
-        return psf_norm_array
-
-
 def normalize_psf(array, fwhm='fit', size=None, threshold=None, mask_core=None,
                   model='gauss', imlib='vip-fft', interpolation='lanczos4',
                   force_odd=True, correct_outliers=True, full_output=False,
@@ -575,7 +646,54 @@ def normalize_psf(array, fwhm='fit', size=None, threshold=None, mask_core=None,
         X and Y is returned when ``model`` is set to 'gauss').
 
     """
-    
+    def psf_norm_2d(psf, fwhm, threshold, mask_core, full_output, verbose):
+        """ 2d case """
+        # we check if the psf is centered and fix it if needed
+        cy, cx = frame_center(psf, verbose=False)
+        xcom, ycom = cen_com(psf)
+        if not (np.allclose(cy, ycom, atol=1e-2) or
+                np.allclose(cx, xcom, atol=1e-2)):
+            # first we find the centroid and put it in the center of the array
+            centry, centrx = fit_2d(psf, full_output=False, debug=False)
+            if not np.isnan(centry) and not np.isnan(centrx):
+                shiftx, shifty = centrx - cx, centry - cy
+                psf = frame_shift(psf, -shifty, -shiftx, imlib=imlib,
+                                  interpolation=interpolation)
+
+                for _ in range(2):
+                    centry, centrx = fit_2d(psf, full_output=False, debug=False)
+                    if np.isnan(centry) or np.isnan(centrx):
+                        break
+                    cy, cx = frame_center(psf, verbose=False)
+                    shiftx, shifty = centrx - cx, centry - cy
+                    psf = frame_shift(psf, -shifty, -shiftx, imlib=imlib,
+                                      interpolation=interpolation)
+
+        # we check whether the flux is normalized and fix it if needed
+        fwhm_aper = CircularAperture((cx, cy), fwhm/2)
+        fwhm_aper_phot = aperture_photometry(psf, fwhm_aper,
+                                             method='exact')
+        fwhm_flux = np.array(fwhm_aper_phot['aperture_sum'])
+
+        if fwhm_flux > 1.1 or fwhm_flux < 0.9:
+            psf_norm_array = psf / np.array(fwhm_aper_phot['aperture_sum'])
+        else:
+            psf_norm_array = psf
+
+        if threshold is not None:
+            psf_norm_array[np.where(psf_norm_array < threshold)] = 0
+
+        if mask_core is not None:
+            psf_norm_array = get_circle(psf_norm_array, radius=mask_core)
+
+        if verbose:
+            print("Flux in 1xFWHM aperture: {:.3f}".format(fwhm_flux[0]))
+
+        if full_output:
+            return psf_norm_array, fwhm_flux, fwhm
+        else:
+            return psf_norm_array
+    ###########################################################################
     if model == 'gauss':
         fit_2d = fit_2dgaussian
     elif model == 'moff':
@@ -618,8 +736,8 @@ def normalize_psf(array, fwhm='fit', size=None, threshold=None, mask_core=None,
                 if verbose:
                     print("FWHM: {:.3f}".format(fwhm))
 
-        res = _psf_norm_2d(array, fwhm, threshold, mask_core, full_output,
-                          verbose, fit_2d=fit_2d, imlib=imlib, interpolation=interpolation)
+        res = psf_norm_2d(array, fwhm, threshold, mask_core, full_output,
+                          verbose)
         return res
 
     elif array.ndim == 3:
@@ -663,21 +781,22 @@ def normalize_psf(array, fwhm='fit', size=None, threshold=None, mask_core=None,
                     print("FWHM per channel:")
                     print_precision(fwhm)
             # Replace outliers if needed
-            if correct_outliers and np.sum(np.isnan(fwhm)) > 0:
-                for f in range(n):
-                    if np.isnan(fwhm[f]) and f != 0 and f != n-1:
-                        fwhm[f] = np.nanmean(np.array([fwhm[f-1],
-                                                        fwhm[f+1]]))
-                    elif np.isnan(fwhm[f]):
-                        msg = "2D fit failed for first or last channel. "
-                        msg += "Try other parameters?"
-                        raise ValueError(msg)
+            if correct_outliers:
+                if np.sum(np.isnan(fwhm)) > 0:
+                    for f in range(n):
+                        if np.isnan(fwhm[f]) and f != 0 and f != n-1:
+                            fwhm[f] = np.nanmean(np.array([fwhm[f-1],
+                                                           fwhm[f+1]]))
+                        elif np.isnan(fwhm[f]):
+                            msg = "2D fit failed for first or last channel. "
+                            msg += "Try other parameters?"
+                            raise ValueError(msg)
         array_out = []
         fwhm_flux = np.zeros(n)
 
         for fr in range(array.shape[0]):
-            restemp = _psf_norm_2d(array[fr], fwhm[fr], threshold, mask_core,
-                True, False, fit_2d=fit_2d, imlib=imlib, interpolation=interpolation)
+            restemp = psf_norm_2d(array[fr], fwhm[fr], threshold, mask_core,
+                True, False)
             array_out.append(restemp[0])
             fwhm_flux[fr] = restemp[1]
 
