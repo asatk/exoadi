@@ -467,19 +467,20 @@ def _find_indices_adi(angle_list, frame, thr, nframes=None, out_closest=False,
         ind4 = min(index_foll + window, n)
         # indices = np.array(list(range(ind1, ind2)) +
         #                     list(range(ind3, ind4)), dtype='int32')
-        np.r_[np.arange(ind1, ind2), np.arange(ind3, ind4)]
+        indices = np.r_[np.r_[ind1: ind2], np.r_[ind3: ind4]]
     else:
         # For annular PCA, returning all indices (after PA thresholding)
-        half1 = list(range(0, index_prev))
-        half2 = list(range(index_foll, n))
-        indices = np.array(half1 + half2, dtype='int32')
-        np.r_[np.arange(0, index_prev), np.arange(index_foll, n)]
+        # half1 = list(range(0, index_prev))
+        # half2 = list(range(index_foll, n))
+        # indices = np.array(half1 + half2, dtype='int32')
+        indices = np.r_[np.r_[0: index_prev], np.r_[index_foll: n]]
 
         # The goal is to keep min(num_frames/2, ntrunc) in the library after
         # discarding those based on the PA threshold
         if truncate:
             thr = min(n-1, max_frames)
-            all_indices = np.array(half1+half2)
+            all_indices = indices
+            # all_indices = np.array(half1+half2)
             if len(all_indices) > thr:
                 # then truncate and update indices
                 # first sort by dPA
@@ -528,8 +529,8 @@ def _define_annuli(angle_list, ann, n_annuli, fwhm, radius_int, annulus_width,
     if verbose:
         if pa_threshold > 0:
             print('Ann {}    PA thresh: {:5.2f}    Ann center: '
-                  '{:3.0f}    N segments: {} '.format(ann + 1, pa_threshold,
-                                                      ann_center, n_segments))
+                  '{:3.0f}    N segments: {} '.format(
+                        ann + 1, pa_threshold, ann_center, n_segments))
         else:
             print('Ann {}    Ann center: {:3.0f}    N segments: '
                   '{} '.format(ann + 1, ann_center, n_segments))
@@ -570,17 +571,37 @@ def rotate_fft(array, angle):
     """
     y_ori, x_ori = array.shape
 
-    while angle < 0:
-        angle += 360
-    while angle > 360:
-        angle -= 360
+    # while angle < 0:
+    #     angle += 360
+    # while angle > 360:
+    #     angle -= 360
+
+    angle %= 360
 
     # first convert to odd size before multiple 90deg rotations
-    if not y_ori % 2 or not x_ori % 2:
+    # """
+    if (y_ori | x_ori) % 2 == 0:
+        array_in = np.zeros([array.shape[0]+1, array.shape[1]+1])
+        array_in[:-1, :-1] = array.copy()
+    elif y_ori % 2 == 0:
+        array_in = np.zeros([array.shape[0]+1, array.shape[1]])
+        array_in[:-1, :] = array.copy()
+    elif x_ori % 2 == 0:
+        array_in = np.zeros([array.shape[0], array.shape[1]+1])
+        array_in[:, :-1] = array.copy()
+    else:
+        array_in = array.copy()
+    # """
+
+    """
+    # >>>> doesn't this add 1 to both dims???
+    if (y_ori & x_ori) % 2 == 0:
         array_in = np.zeros([array.shape[0]+1, array.shape[1]+1])
         array_in[:-1, :-1] = array.copy()
     else:
         array_in = array.copy()
+    """
+
 
     if angle > 45:
         dangle = angle % 90
@@ -609,12 +630,30 @@ def rotate_fft(array, angle):
     s_xy = _fft_shear(s_x, arr_y, b, ax=0, pad=0)
     s_xyx = _fft_shear(s_xy, arr_x, a, ax=1, pad=0)
 
-    if y_ori % 2 or x_ori % 2:
+
+    # set it back to original dimensions
+    # """
+    if (y_ori | x_ori) % 2 == 0:
+        array_out = np.zeros([s_xyx.shape[0]+1, s_xyx.shape[1]+1])
+        array_out[:-1, :-1] = np.real(s_xyx)
+    elif y_ori % 2 == 0:
+        array_out = np.zeros([s_xyx.shape[0]+1, s_xyx.shape[1]])
+        array_out[:-1, :] = np.real(s_xyx)
+    elif x_ori % 2 == 0:
+        array_out = np.zeros([s_xyx.shape[0], s_xyx.shape[1]+1])
+        array_out[:, :-1] = np.real(s_xyx)
+    else:
+        array_out = np.real(s_xyx)
+    # """
+
+    """
+    if (y_ori | x_ori) % 2:
         # set it back to original dimensions
         array_out = np.zeros([s_xyx.shape[0]+1, s_xyx.shape[1]+1])
         array_out[:-1, :-1] = np.real(s_xyx)
     else:
         array_out = np.real(s_xyx)
+    """
 
     return array_out
 

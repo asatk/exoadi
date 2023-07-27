@@ -27,9 +27,16 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False, debug: bool=False
     if do_opt:
         
         time_cubes = [cubes[:, i] for i in range(n_frames)]
-        input_list = list(zip(time_cubes, np.repeat([wavelengths], n_frames, axis=0), 
-                    np.repeat([flux_st], n_frames, axis=0), np.repeat([mask], n_frames, axis=0),
-                    np.repeat([2], n_frames), np.repeat(["stddev"], n_frames), np.repeat([debug], n_frames)))
+        input_list = list(zip(time_cubes,
+            np.repeat([wavelengths], n_frames, axis=0), 
+            np.repeat([flux_st], n_frames, axis=0),
+            np.repeat([mask], n_frames, axis=0),
+            np.repeat([2], n_frames, axis=0),
+            np.repeat(["stddev"], n_frames, axis=0),
+            np.repeat([None], n_frames, axis=0),
+            np.repeat([debug], n_frames, axis=0)))
+        
+        # print(input_list[0])
 
         with mp.Pool(redux_utils.numworkers) as pool:
             output = np.array(pool.starmap(find_scal_vector, input_list, chunksize=redux_utils.chunksize))
@@ -48,7 +55,7 @@ def calc_scal(cubes, wavelengths, flux_st, mask, do_opt=False, debug: bool=False
 
 def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
          psf: np.ndarray=None, ret_fwhm_list: bool=False, verbose: bool=False,
-         debug: bool=False, do_opt: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
+         debug: bool=False, do_opt: bool=False, correct_outliers: bool=False) -> tuple[float, np.ndarray, np.ndarray]:
     '''
     Prepare key arguments required in the post-processing algorithms in VIP.
     These arguments are the FWHM of the PSF before normalization, the optimal
@@ -61,7 +68,7 @@ def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
 
     # get flux and fwhm of host star in each channel
     psfn, flux_st, fwhm_list = normalize_psf(psf, fwhm="fit", full_output=True,
-                                             verbose=verbose, debug=debug)
+        verbose=verbose, debug=debug, correct_outliers=correct_outliers)
     fwhm = fwhm_list if ret_fwhm_list else np.mean(fwhm_list)
 
     #pixel diameter of star

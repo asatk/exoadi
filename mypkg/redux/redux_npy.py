@@ -7,10 +7,16 @@ from sklearn.decomposition import TruncatedSVD
 from sklearn.utils.extmath import randomized_svd
 from typing import Callable
 
-from redux_utils import to_fits, to_npy, numcomps, numworkers
+from .redux_utils import to_fits, to_npy, numcomps, numworkers
 
-def ADI_npy(cube: np.ndarray, angles: np.ndarray,
-        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean) -> np.ndarray:
+def ADI_npy(cube: np.ndarray, angle_list: np.ndarray,
+        collapse: str="median", **kwargs) -> np.ndarray:
+    
+    collapse_fn = np.median
+    if collapse == "mean":
+        collapse_fn = np.mean
+    elif collapse == "sum":
+        collapse_fn = np.sum
 
     # subtract PSF model from all time frames in this single wavelength channel
     psf = np.median(cube, axis=0)
@@ -18,27 +24,45 @@ def ADI_npy(cube: np.ndarray, angles: np.ndarray,
 
     # de-rotate the data
     cube_rot = np.empty_like(cube_res)
-    for i in range(len(angles)):
-        cube_rot[i] = ndimage.rotate(cube_res[i], -1 * angles[i], reshape=False)
+    for i in range(len(angle_list)):
+        cube_rot[i] = ndimage.rotate(cube_res[i], -1 * angle_list[i], reshape=False)
 
     # combine de-rotated images in this wavelength channel
-    adi = combine_fn(cube_rot, axis=0)
+    adi = collapse_fn(cube_rot, axis=0)
 
     return adi
 
 # combine each wavelength channel
-def combine_ADI_npy(cube: np.ndarray, angles: np.ndarray,
-        combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean,
-        channel_combine_fn: Callable[[np.ndarray], np.ndarray]=np.mean) -> np.ndarray:
+def ASDI_npy(cube: np.ndarray, angle_list: np.ndarray,
+        collapse_all: str="median", redux_fn: Callable=ADI_npy,
+        use_mp: bool=False, **kwargs) -> np.ndarray:
+    
+    # mp "daemonic" processes cannot spawn further processes
+    nproc = kwargs.get("nproc", numworkers) if not use_mp else 1
+
+    combine_fn = np.median
+    if collapse_all == "mean":
+        combine_fn = np.mean
+    elif collapse_all == "sum":
+        combine_fn = np.sum
 
     nchnls = cube.shape[0]
-    assert cube.shape[1] == angles.shape[0]
+    assert cube.shape[1] == angle_list.shape[0]
 
     # calculate ADI image for each wavelength channel
-    with mp.Pool(numworkers) as pool:
-        channels = np.array(pool.starmap(
-            ADI_npy,
-            zip(cube, angles, [channel_combine_fn] * nchnls)))
+    if not use_mp:
+        kwargs["full_output"] = False
+        chnls = []
+        for cube_ch in cube:
+            chnls.append(redux_fn(cube=cube_ch, angle_list=angle_list, **kwargs))
+        channels = np.array(chnls)
+
+    else:
+        # kwargs will really just be positional args... make sure they are good
+        input_arg = list(zip(cube, np.repeat([angle_list], nchnls, axis=0),
+            np.repeat(kwargs, nchnls, axis=0)))
+        with mp.Pool(nproc) as pool:
+            channels = np.array(pool.starmap(redux_fn, input_arg))
 
     # combine ADI images across channels
     adi_combined = combine_fn(channels, axis=0)
@@ -80,7 +104,7 @@ if __name__ == "__main__":
     outcombined_path = "./out/vipADI_%05i_%05i_median.fits"%(firstchannelnum, lastchannelnum)
     # --- PATHS --- #
 
-    pp_cube = combine_ADI_npy(channelnums, data_paths, combine_fn=np.mean,
+    pp_cube = ASDI_npy(channelnums, data_paths, combine_fn=np.mean,
             channel_combine_fn=np.mean)
     
     to_fits(pp_cube, outcombined_path)

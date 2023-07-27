@@ -19,7 +19,7 @@ def postproc(cubes, wavelengths, angles, lib: str="vip", algo: str="ASDI",
     if lib == "npy":       # Classical ADI
         import redux_npy
 
-        pp_cubes = redux_npy.combine_ADI_npy(cubes, angles, combine_fn=combine_fn,
+        pp_cubes = redux_npy.ASDI_npy(cubes, angles, combine_fn=combine_fn,
             channel_combine_fn=channel_combine_fn)
         
     elif lib == "vip":     # VIP ADI

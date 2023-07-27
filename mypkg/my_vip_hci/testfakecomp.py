@@ -122,6 +122,9 @@ def cube_inject_companions(array, psf_template, angle_list, flevel, rad_dists,
                          interpolation='lanczos4', transmission=None,
                          radial_gradient=False, verbose=False):
         if np.isscalar(flevel):
+            print(flevel)
+            print(angle_list.shape)
+            print(np.ones_like(angle_list))
             flevel = np.ones_like(angle_list)*flevel
 
         if transmission is not None:

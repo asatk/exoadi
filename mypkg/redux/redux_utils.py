@@ -6,7 +6,7 @@ from typing import Callable
 from vip_hci.fits import open_fits, write_fits
 
 numworkers = 8      # number of worker threads/processes
-numcomps = 3        # number of PCA components
+numcomps = 10        # number of PCA components
 everynthframe = 20  # number of frames 'n' selected from data cube
 chunksize = 20
 pxscale = 0.035

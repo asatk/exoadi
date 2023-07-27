@@ -66,6 +66,8 @@ if __name__ == "__main__":
         # "PCA003-single",
         # "PCA003-double",
         # "PCA003-annular",
+        "PCA003-dbl",
+        "PCA005-dbl",
         "ASDI-ASDI",
         "ASDI-ASDIann",
         "ASDI-SDI"
