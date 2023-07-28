@@ -6,17 +6,21 @@ from scipy.sparse.linalg import svds
 from sklearn.decomposition import TruncatedSVD
 from sklearn.utils.extmath import randomized_svd
 from typing import Callable
+from vip_hci.var import mask_circle
 
 from .redux_utils import to_fits, to_npy, numcomps, numworkers
 
 def ADI_npy(cube: np.ndarray, angle_list: np.ndarray,
-        collapse: str="median", **kwargs) -> np.ndarray:
+        collapse: str="median", radius_int: int=0, **kwargs) -> np.ndarray:
     
     collapse_fn = np.median
     if collapse == "mean":
         collapse_fn = np.mean
     elif collapse == "sum":
         collapse_fn = np.sum
+
+    if radius_int > 0:
+        cube = mask_circle(cube, radius=radius_int, mode="in")
 
     # subtract PSF model from all time frames in this single wavelength channel
     psf = np.median(cube, axis=0)
@@ -35,8 +39,18 @@ def ADI_npy(cube: np.ndarray, angle_list: np.ndarray,
 # combine each wavelength channel
 def ASDI_npy(cube: np.ndarray, angle_list: np.ndarray,
         collapse_all: str="median", redux_fn: Callable=ADI_npy,
-        use_mp: bool=False, **kwargs) -> np.ndarray:
+        use_mp: bool=False, scale_list: list=None,
+        verbose: bool=False, **kwargs) -> np.ndarray:
     
+    # mask out beforehand
+    # radius_int = kwargs.get("radius_int", 0)
+    # if radius_int != 0:
+    #     mask = mask_circle(np.ones_like(cube[0,0]), radius=radius_int, mode="in")
+    #     cube *= mask
+        # kwargs.update({"radius_int": 0})
+
+    kwargs.update({"scale_list": scale_list, "verbose": verbose})
+
     # mp "daemonic" processes cannot spawn further processes
     nproc = kwargs.get("nproc", numworkers) if not use_mp else 1
 

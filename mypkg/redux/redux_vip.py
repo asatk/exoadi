@@ -76,7 +76,7 @@ def prep(cubes: np.ndarray, wavelengths: np.ndarray, mask_rad: float=10,
 
     opt_scal, opt_flux = calc_scal(cubes, wavelengths, flux_st, mask, do_opt=do_opt, debug=debug)
 
-    return fwhm, psfn, opt_scal, opt_flux
+    return psfn, flux_st, fwhm, opt_scal, opt_flux
 
 def ASDI_vip(cubes: np.ndarray, wavelengths: np.ndarray, angles: np.ndarray,
         mask_rad: float=10, do_opt: bool=False, full_output: bool=False,
